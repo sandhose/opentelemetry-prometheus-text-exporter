@@ -5,9 +5,12 @@ use opentelemetry_sdk::{
     metrics::{ManualReader, Pipeline, data::ResourceMetrics, reader::MetricReader},
 };
 
-#[derive(Clone, Default, Debug)]
+use crate::serialize::PrometheusSerializer;
+
+#[derive(Clone, Debug)]
 pub struct PrometheusExporter {
     inner: Arc<ManualReader>,
+    serializer: PrometheusSerializer,
 }
 
 impl MetricReader for PrometheusExporter {
@@ -38,7 +41,19 @@ impl MetricReader for PrometheusExporter {
 impl PrometheusExporter {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Arc::new(ManualReader::default()),
+            serializer: PrometheusSerializer::new(),
+        }
+    }
+
+    /// Create a new exporter without scope labels
+    #[must_use]
+    pub fn without_scope_labels() -> Self {
+        Self {
+            inner: Arc::new(ManualReader::default()),
+            serializer: PrometheusSerializer::without_scope_labels(),
+        }
     }
 
     /// Export the collected metrics to the given writer.
@@ -49,7 +64,13 @@ impl PrometheusExporter {
     pub fn export<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         let mut rm = ResourceMetrics::default();
         self.inner.collect(&mut rm).map_err(std::io::Error::other)?;
-        crate::serialize::serialize(&rm, writer)?;
+        self.serializer.serialize(&rm, writer)?;
         Ok(())
+    }
+}
+
+impl Default for PrometheusExporter {
+    fn default() -> Self {
+        Self::new()
     }
 }

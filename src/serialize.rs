@@ -4,38 +4,6 @@
 //! text exposition format, following the OpenTelemetry specification for Prometheus
 //! compatibility: https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/
 //!
-//! # Key Features
-//!
-//! - **Specification Compliance**: Follows the OpenTelemetry specification for metric name
-//!   transformation, unit conversion, and label sanitization.
-//! - **Zero-Allocation Streaming**: Writes directly to the output without building intermediate
-//!   collections, minimizing memory allocations and improving performance.
-//! - **Memory Optimizations**: Uses `Cow<str>` to avoid unnecessary allocations when strings
-//!   don't need transformation.
-//! - **Proper Type Mapping**: Correctly maps OpenTelemetry metric types to Prometheus types
-//!   (e.g., up-down counters become gauges, monotonic sums become counters).
-//! - **Scope Information**: Adds instrumentation scope information as `otel_scope_*` labels.
-//! - **Resource Attributes**: Converts resource attributes to `target_info` metric with
-//!   sanitized label names.
-//!
-//! # Performance Optimizations
-//!
-//! ## Streaming Architecture
-//! This implementation uses a streaming approach that writes output directly to the provided
-//! `Write` trait without building intermediate data structures:
-//!
-//! - **No Label Collections**: Instead of collecting labels into `Vec<(String, String)>`,
-//!   labels are written directly to the output as they are processed.
-//! - **Direct Writing**: Metric names, values, and metadata are formatted and written
-//!   immediately rather than being accumulated in memory.
-//! - **Minimal Buffering**: Only essential state (like handling label name conflicts) is
-//!   kept in memory temporarily.
-//!
-//! ## Memory Allocation Patterns
-//! - **String Processing**: Uses `Cow<str>` to avoid allocations when no transformation is needed
-//! - **Label Conflicts**: Only allocates when multiple attributes map to the same sanitized name
-//! - **Iterative Processing**: Processes attributes one at a time without collecting into vectors
-//!
 //! # Transformations Applied
 //!
 //! ## Metric Names
@@ -59,12 +27,346 @@ use opentelemetry_sdk::{
     Resource,
     metrics::{
         Temporality,
-        data::{AggregatedMetrics, Gauge, Histogram, MetricData, ResourceMetrics, Sum},
+        data::{AggregatedMetrics, Gauge, Histogram, Metric, MetricData, ResourceMetrics, Sum},
     },
 };
 use std::borrow::Cow;
-use std::collections::HashMap;
+
 use std::io::Write;
+
+/// Prometheus format serializer with configurable options
+#[derive(Debug, Clone)]
+pub struct PrometheusSerializer {
+    /// Whether to include OpenTelemetry scope labels (otel_scope_name, etc.)
+    pub include_scope_labels: bool,
+}
+
+impl PrometheusSerializer {
+    /// Create a new serializer with default configuration
+    pub fn new() -> Self {
+        Self {
+            include_scope_labels: true,
+        }
+    }
+
+    /// Create a new serializer with scope labels disabled
+    pub fn without_scope_labels() -> Self {
+        Self {
+            include_scope_labels: false,
+        }
+    }
+
+    /// Serialize ResourceMetrics to Prometheus format
+    pub fn serialize<W: Write>(&self, rm: &ResourceMetrics, writer: &mut W) -> std::io::Result<()> {
+        self.serialize_resource_metrics(rm, writer)
+    }
+
+    fn serialize_resource_metrics<W: Write>(
+        &self,
+        rm: &ResourceMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        // Serialize all scope metrics first
+        for sm in rm.scope_metrics() {
+            self.serialize_scope_metrics(sm, writer)?;
+        }
+
+        // Serialize resource as target_info
+        self.serialize_resource(rm.resource(), writer)?;
+
+        Ok(())
+    }
+
+    fn serialize_resource<W: Write>(
+        &self,
+        resource: &Resource,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        // Don't serialize empty resources
+        if resource.is_empty() {
+            return Ok(());
+        }
+
+        write_type_comment(writer, "target_info", "gauge")?;
+        write_help_comment(writer, "target_info", "Target metadata")?;
+
+        write!(writer, "target_info")?;
+
+        let mut label_writer = LabelWriter::new(writer);
+        for (key, value) in resource.iter() {
+            let sanitized_key = sanitize_name(key.as_str());
+            let value_str = format!("{value}");
+            label_writer.emit(&sanitized_key, &value_str)?;
+        }
+        label_writer.finish()?;
+
+        write!(writer, " 1\n")?;
+
+        Ok(())
+    }
+
+    fn serialize_scope_metrics<W: Write>(
+        &self,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        for metric in scope_metrics.metrics() {
+            self.serialize_metric(metric, scope_metrics, writer)?;
+        }
+        Ok(())
+    }
+
+    fn serialize_metric<W: Write>(
+        &self,
+        metric: &Metric,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        let data = metric.data();
+
+        let (prometheus_type, is_monotonic) = match get_prometheus_type_and_is_monotonic(data) {
+            Some(result) => result,
+            None => return Ok(()), // Skip unsupported metrics
+        };
+
+        // Apply name transformations
+        let sanitized_name = sanitize_name(metric.name());
+        let converted_unit = convert_unit(metric.unit());
+
+        // Add unit suffix if needed and not already present
+        let final_name = if converted_unit.is_empty() {
+            sanitized_name
+        } else {
+            add_unit_suffix(sanitized_name.as_ref(), converted_unit.as_ref())
+        };
+
+        // Add _total suffix for monotonic sums if needed
+        let final_name = if is_monotonic && !final_name.ends_with("_total") {
+            match final_name {
+                Cow::Borrowed(s) => Cow::Owned(format!("{}_total", s)),
+                Cow::Owned(s) => Cow::Owned(format!("{}_total", s)),
+            }
+        } else {
+            final_name
+        };
+
+        // Write metadata
+        write_type_comment(writer, final_name.as_ref(), prometheus_type)?;
+        write_help_comment(writer, final_name.as_ref(), metric.description())?;
+        write_unit_comment(writer, final_name.as_ref(), converted_unit.as_ref())?;
+
+        match data {
+            AggregatedMetrics::F64(MetricData::Gauge(gauge)) => {
+                self.serialize_gauge(final_name.as_ref(), &gauge, scope_metrics, writer)?;
+            }
+            AggregatedMetrics::U64(MetricData::Gauge(gauge)) => {
+                self.serialize_gauge(final_name.as_ref(), &gauge, scope_metrics, writer)?;
+            }
+            AggregatedMetrics::I64(MetricData::Gauge(gauge)) => {
+                self.serialize_gauge(final_name.as_ref(), &gauge, scope_metrics, writer)?;
+            }
+
+            AggregatedMetrics::F64(MetricData::Sum(sum)) => {
+                self.serialize_sum(final_name.as_ref(), &sum, scope_metrics, writer)?;
+            }
+            AggregatedMetrics::U64(MetricData::Sum(sum)) => {
+                self.serialize_sum(final_name.as_ref(), &sum, scope_metrics, writer)?;
+            }
+            AggregatedMetrics::I64(MetricData::Sum(sum)) => {
+                self.serialize_sum(final_name.as_ref(), &sum, scope_metrics, writer)?;
+            }
+
+            AggregatedMetrics::F64(MetricData::Histogram(histogram)) => {
+                self.serialize_histogram(final_name.as_ref(), &histogram, scope_metrics, writer)?;
+            }
+            AggregatedMetrics::U64(MetricData::Histogram(histogram)) => {
+                self.serialize_histogram(final_name.as_ref(), &histogram, scope_metrics, writer)?;
+            }
+            AggregatedMetrics::I64(MetricData::Histogram(histogram)) => {
+                self.serialize_histogram(final_name.as_ref(), &histogram, scope_metrics, writer)?;
+            }
+
+            // Skip exponential histograms
+            AggregatedMetrics::F64(MetricData::ExponentialHistogram(_))
+            | AggregatedMetrics::U64(MetricData::ExponentialHistogram(_))
+            | AggregatedMetrics::I64(MetricData::ExponentialHistogram(_)) => {}
+        }
+
+        write!(writer, "\n")?;
+
+        Ok(())
+    }
+
+    fn write_scope_labels<W: Write>(
+        &self,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        label_writer: &mut LabelWriter<W>,
+    ) -> std::io::Result<()> {
+        if !self.include_scope_labels {
+            return Ok(());
+        }
+        let scope = scope_metrics.scope();
+
+        // Add scope name
+        if !scope.name().is_empty() {
+            label_writer.emit("otel_scope_name", scope.name())?;
+        }
+
+        // Add scope version
+        if let Some(version) = scope.version() {
+            if !version.is_empty() {
+                label_writer.emit("otel_scope_version", version)?;
+            }
+        }
+
+        // Add scope schema URL
+        if let Some(schema_url) = scope.schema_url() {
+            if !schema_url.is_empty() {
+                label_writer.emit("otel_scope_schema_url", schema_url)?;
+            }
+        }
+
+        // Add scope attributes (excluding name, version, schema_url to avoid conflicts)
+        for attr in scope.attributes() {
+            let key = attr.key.as_str();
+            if key != "name" && key != "version" && key != "schema_url" {
+                let sanitized_key = sanitize_name(key);
+                let value = format!("{}", attr.value);
+                let prefixed_key = format!("otel_scope_{}", sanitized_key.as_ref());
+                label_writer.emit(&prefixed_key, &value)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_metric_labels<W: Write>(
+        &self,
+        attributes: impl Iterator<Item = KeyValue>,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        let mut label_writer = LabelWriter::new(writer);
+
+        write_attributes_as_labels(attributes, &mut label_writer)?;
+        self.write_scope_labels(scope_metrics, &mut label_writer)?;
+
+        label_writer.finish()
+    }
+
+    fn write_bucket_labels<W: Write>(
+        &self,
+        attributes: impl Iterator<Item = KeyValue>,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        le_value: &str,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        let mut label_writer = LabelWriter::new(writer);
+
+        write_attributes_as_labels(attributes, &mut label_writer)?;
+        label_writer.emit("le", le_value)?;
+        self.write_scope_labels(scope_metrics, &mut label_writer)?;
+
+        label_writer.finish()
+    }
+
+    fn serialize_gauge<T: Numeric, W: Write>(
+        &self,
+        name: &str,
+        gauge: &Gauge<T>,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        for data_point in gauge.data_points() {
+            write!(writer, "{}", name)?;
+            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            write!(writer, " ")?;
+            data_point.value().serialize(writer)?;
+            write!(writer, "\n")?;
+        }
+
+        Ok(())
+    }
+
+    fn serialize_sum<T: Numeric, W: Write>(
+        &self,
+        name: &str,
+        sum: &Sum<T>,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        for data_point in sum.data_points() {
+            write!(writer, "{}", name)?;
+            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            write!(writer, " ")?;
+            data_point.value().serialize(writer)?;
+            write!(writer, "\n")?;
+        }
+
+        Ok(())
+    }
+
+    fn serialize_histogram<T: Numeric, W: Write>(
+        &self,
+        name: &str,
+        histogram: &Histogram<T>,
+        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        for data_point in histogram.data_points() {
+            // _count metric
+            write!(writer, "{}_count", name)?;
+            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            write!(writer, " ")?;
+            data_point.count().serialize(writer)?;
+            write!(writer, "\n")?;
+
+            // _sum metric
+            write!(writer, "{}_sum", name)?;
+            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            write!(writer, " ")?;
+            data_point.sum().serialize(writer)?;
+            write!(writer, "\n")?;
+
+            // _bucket metrics
+            let mut cumulative_count = 0u64;
+            for (bound, count) in data_point.bounds().zip(data_point.bucket_counts()) {
+                cumulative_count += count;
+
+                write!(writer, "{}_bucket", name)?;
+                self.write_bucket_labels(
+                    data_point.attributes().cloned(),
+                    scope_metrics,
+                    &bound.to_string(),
+                    writer,
+                )?;
+                write!(writer, " ")?;
+                cumulative_count.serialize(writer)?;
+                write!(writer, "\n")?;
+            }
+
+            // +Inf bucket
+            write!(writer, "{}_bucket", name)?;
+            self.write_bucket_labels(
+                data_point.attributes().cloned(),
+                scope_metrics,
+                "+Inf",
+                writer,
+            )?;
+            write!(writer, " ")?;
+            data_point.count().serialize(writer)?;
+            write!(writer, "\n")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for PrometheusSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 trait Numeric: Copy {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()>;
@@ -102,20 +404,10 @@ impl Numeric for i64 {
 ///
 /// Prometheus metric and label names must match the regex: `[a-zA-Z_:]([a-zA-Z0-9_:])*`
 ///
-/// This function uses `Cow<str>` to avoid allocations when the input is already valid.
-///
 /// # Transformations
 /// - First character must be `[a-zA-Z_:]`, invalid chars become `_`
 /// - Subsequent characters must be `[a-zA-Z0-9_:]`, invalid chars become `_`
 /// - Multiple consecutive underscores are collapsed to single `_`
-///
-/// # Examples
-/// ```
-/// # use std::borrow::Cow;
-/// # fn sanitize_name(name: &str) -> Cow<'_, str> { todo!() }
-/// assert_eq!(sanitize_name("valid_name"), Cow::Borrowed("valid_name"));
-/// assert_eq!(sanitize_name("invalid.name"), Cow::Owned("invalid_name".to_string()));
-/// ```
 fn sanitize_name(name: &str) -> Cow<'_, str> {
     // Check if name is already valid
     let mut chars = name.chars();
@@ -179,22 +471,12 @@ fn sanitize_name(name: &str) -> Cow<'_, str> {
 
 /// Converts OTLP unit to Prometheus unit following the OpenTelemetry specification.
 ///
-/// This function uses `Cow<str>` to avoid allocations when no conversion is needed.
-///
 /// # Transformations
+///
 /// - Removes content within brackets: `count{packets}` → `count`
 /// - Special cases: `1` → `ratio`
 /// - Converts slashes: `foo/bar` → `foo_per_bar`
 /// - Expands abbreviations: `ms` → `milliseconds`, `s` → `seconds`, etc.
-///
-/// # Examples
-/// ```
-/// # use std::borrow::Cow;
-/// # fn convert_unit(unit: &str) -> Cow<'_, str> { todo!() }
-/// assert_eq!(convert_unit("s"), Cow::Borrowed("seconds"));
-/// assert_eq!(convert_unit("custom_unit"), Cow::Borrowed("custom_unit"));
-/// assert_eq!(convert_unit("requests/second"), Cow::Owned("requests_per_second".to_string()));
-/// ```
 fn convert_unit(unit: &str) -> Cow<'_, str> {
     let trimmed = unit.trim();
 
@@ -252,17 +534,6 @@ fn convert_unit(unit: &str) -> Cow<'_, str> {
 }
 
 /// Adds unit suffix to metric name if not already present.
-///
-/// Uses `Cow<str>` to avoid allocations when no suffix is needed.
-///
-/// # Examples
-/// ```
-/// # use std::borrow::Cow;
-/// # fn add_unit_suffix<'a>(name: &'a str, unit: &str) -> Cow<'a, str> { todo!() }
-/// assert_eq!(add_unit_suffix("metric", ""), Cow::Borrowed("metric"));
-/// assert_eq!(add_unit_suffix("metric_seconds", "seconds"), Cow::Borrowed("metric_seconds"));
-/// assert_eq!(add_unit_suffix("metric", "seconds"), Cow::Owned("metric_seconds".to_string()));
-/// ```
 fn add_unit_suffix<'a>(name: &'a str, unit: &str) -> Cow<'a, str> {
     if unit.is_empty() || name.ends_with(unit) {
         Cow::Borrowed(name)
@@ -273,65 +544,50 @@ fn add_unit_suffix<'a>(name: &'a str, unit: &str) -> Cow<'a, str> {
 
 /// Writes attributes as Prometheus labels directly to the writer.
 ///
-/// This is a key part of the zero-allocation streaming approach. Instead of building
-/// an intermediate collection of labels, this function processes attributes one by one
-/// and writes them directly to the output.
-///
-/// # Streaming Benefits
-/// - No intermediate `Vec<(String, String)>` allocation
-/// - Labels are processed and written immediately
-/// - Memory usage scales with conflicts, not total attribute count
-///
-/// # Conflict Handling
-/// When multiple attributes sanitize to the same Prometheus label name,
-/// their values are concatenated with `;` separator. This is the only case
-/// where temporary allocation occurs (to collect conflicting values).
-///
-/// # Returns
-/// Returns true if any labels were written, false otherwise.
-fn write_attributes_as_labels<W: Write>(
-    attributes: impl Iterator<Item = KeyValue>,
-    writer: &mut W,
-) -> std::io::Result<bool> {
-    let mut label_map: HashMap<String, Vec<String>> = HashMap::new();
-
-    // Group by sanitized key
-    for attr in attributes {
-        let sanitized_key = sanitize_name(attr.key.as_str()).into_owned();
-        let value = format!("{}", attr.value);
-        label_map.entry(sanitized_key).or_default().push(value);
-    }
-
-    if label_map.is_empty() {
-        return Ok(false);
-    }
-
-    // Write labels directly
-    let mut first = true;
-    for (key, mut values) in label_map {
-        if !first {
-            write!(writer, ",")?;
-        }
-        first = false;
-
-        write!(writer, "{}=", key)?;
-        if values.len() == 1 {
-            write!(writer, "{}", escape_label_value(&values[0]))?;
-        } else {
-            // Sort values for deterministic output when there are conflicts
-            values.sort();
-            let concatenated = values.join(";");
-            write!(writer, "{}", escape_label_value(&concatenated))?;
-        }
-    }
-    Ok(true)
+/// Handles writing the brackets and separating labels with commas.
+struct LabelWriter<'a, W: Write> {
+    writer: &'a mut W,
+    has_written: bool,
 }
 
-/// Escapes label value for Prometheus format using Rust's Debug formatting.
-///
-/// This ensures proper escaping of quotes, backslashes, and other special characters.
-fn escape_label_value(value: &str) -> String {
-    format!("{:?}", value)
+impl<'a, W: Write> LabelWriter<'a, W> {
+    fn new(writer: &'a mut W) -> Self {
+        Self {
+            writer,
+            has_written: false,
+        }
+    }
+
+    fn emit(&mut self, key: &str, value: &str) -> std::io::Result<()> {
+        if !self.has_written {
+            self.has_written = true;
+            write!(self.writer, "{{")?;
+        } else {
+            write!(self.writer, ",")?;
+        }
+
+        write!(self.writer, "{key}={value:?}")?;
+        Ok(())
+    }
+
+    fn finish(self) -> std::io::Result<()> {
+        if self.has_written {
+            write!(self.writer, "}}")?;
+        }
+        Ok(())
+    }
+}
+
+fn write_attributes_as_labels<W: Write>(
+    attributes: impl Iterator<Item = KeyValue>,
+    label_writer: &mut LabelWriter<W>,
+) -> std::io::Result<()> {
+    for attr in attributes {
+        let sanitized_key = sanitize_name(attr.key.as_str());
+        let value = format!("{}", attr.value);
+        label_writer.emit(sanitized_key.as_ref(), &value)?;
+    }
+    Ok(())
 }
 
 /// Writes TYPE comment
@@ -350,127 +606,24 @@ fn write_help_comment<W: Write>(
     description: &str,
 ) -> std::io::Result<()> {
     if !description.is_empty() {
-        write!(writer, "# HELP {} {}\n", name, description)?;
+        let escaped_description = escape_help_text(description);
+        write!(writer, "# HELP {} {}\n", name, escaped_description)?;
     }
     Ok(())
+}
+
+/// Escapes special characters in HELP comment text according to Prometheus format.
+fn escape_help_text(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+        .replace('\r', "\\r")
 }
 
 /// Writes UNIT comment
 fn write_unit_comment<W: Write>(writer: &mut W, name: &str, unit: &str) -> std::io::Result<()> {
     if !unit.is_empty() {
         write!(writer, "# UNIT {} {}\n", name, unit)?;
-    }
-    Ok(())
-}
-
-/// Writes scope labels directly to the writer.
-fn write_scope_labels<W: Write>(
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    let scope = scope_metrics.scope();
-
-    // Add scope name
-    if !scope.name().is_empty() {
-        write!(
-            writer,
-            ",otel_scope_name={}",
-            escape_label_value(scope.name())
-        )?;
-    }
-
-    // Add scope version
-    if let Some(version) = scope.version() {
-        if !version.is_empty() {
-            write!(
-                writer,
-                ",otel_scope_version={}",
-                escape_label_value(version)
-            )?;
-        }
-    }
-
-    // Add scope schema URL
-    if let Some(schema_url) = scope.schema_url() {
-        if !schema_url.is_empty() {
-            write!(
-                writer,
-                ",otel_scope_schema_url={}",
-                escape_label_value(schema_url)
-            )?;
-        }
-    }
-
-    // Add scope attributes (excluding name, version, schema_url to avoid conflicts)
-    for attr in scope.attributes() {
-        let key = attr.key.as_str();
-        if key != "name" && key != "version" && key != "schema_url" {
-            let sanitized_key = sanitize_name(key);
-            let value = format!("{}", attr.value);
-            write!(
-                writer,
-                ",otel_scope_{}={}",
-                sanitized_key.as_ref(),
-                escape_label_value(&value)
-            )?;
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) fn serialize<W: Write>(rm: &ResourceMetrics, writer: &mut W) -> std::io::Result<()> {
-    // Serialize all metrics first
-    for sm in rm.scope_metrics() {
-        serialize_scope_metrics(sm, writer)?;
-    }
-
-    // Serialize resource as target_info
-    serialize_resource(rm.resource(), writer)?;
-
-    Ok(())
-}
-
-fn serialize_resource<W: Write>(resource: &Resource, writer: &mut W) -> std::io::Result<()> {
-    // Don't serialize empty resources
-    if resource.is_empty() {
-        return Ok(());
-    }
-
-    write_type_comment(writer, "target_info", "gauge")?;
-    write_help_comment(writer, "target_info", "Target metadata")?;
-
-    write!(writer, "target_info")?;
-
-    // Write labels directly
-    write!(writer, "{{")?;
-    let mut first = true;
-    for (key, value) in resource.iter() {
-        if !first {
-            write!(writer, ",")?;
-        }
-        first = false;
-        let sanitized_key = sanitize_name(key.as_str());
-        let value_str = format!("{}", value);
-        write!(
-            writer,
-            "{}={}",
-            sanitized_key.as_ref(),
-            escape_label_value(&value_str)
-        )?;
-    }
-    write!(writer, "}}")?;
-    write!(writer, " 1\n")?;
-
-    Ok(())
-}
-
-fn serialize_scope_metrics<W: Write>(
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    for metric in scope_metrics.metrics() {
-        serialize_metric(metric, scope_metrics, writer)?;
     }
     Ok(())
 }
@@ -512,259 +665,6 @@ fn get_prometheus_type_and_is_monotonic(data: &AggregatedMetrics) -> Option<(&'s
         | AggregatedMetrics::U64(MetricData::ExponentialHistogram(_))
         | AggregatedMetrics::I64(MetricData::ExponentialHistogram(_)) => None,
     }
-}
-
-fn serialize_metric<W: Write>(
-    metric: &opentelemetry_sdk::metrics::data::Metric,
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    let data = metric.data();
-
-    // Skip unsupported metrics
-    let Some((prometheus_type, is_monotonic)) = get_prometheus_type_and_is_monotonic(data) else {
-        return Ok(());
-    };
-
-    let original_name = metric.name();
-    let sanitized_name = sanitize_name(original_name);
-    let converted_unit = convert_unit(metric.unit().as_ref());
-
-    // For monotonic sums, add _total suffix if not present
-    let base_name = if is_monotonic {
-        if !sanitized_name.ends_with("_total") {
-            Cow::Owned(format!("{}_total", sanitized_name))
-        } else {
-            sanitized_name
-        }
-    } else {
-        sanitized_name
-    };
-
-    let final_name = add_unit_suffix(base_name.as_ref(), converted_unit.as_ref());
-
-    // Write metadata
-    write_type_comment(writer, final_name.as_ref(), prometheus_type)?;
-    write_help_comment(writer, final_name.as_ref(), metric.description())?;
-    write_unit_comment(writer, final_name.as_ref(), converted_unit.as_ref())?;
-
-    match data {
-        AggregatedMetrics::F64(MetricData::Gauge(gauge)) => {
-            serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
-        }
-        AggregatedMetrics::U64(MetricData::Gauge(gauge)) => {
-            serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
-        }
-        AggregatedMetrics::I64(MetricData::Gauge(gauge)) => {
-            serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
-        }
-
-        AggregatedMetrics::F64(MetricData::Sum(sum)) => {
-            serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
-        }
-        AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-            serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
-        }
-        AggregatedMetrics::I64(MetricData::Sum(sum)) => {
-            serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
-        }
-
-        AggregatedMetrics::F64(MetricData::Histogram(histogram)) => {
-            serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
-        }
-        AggregatedMetrics::U64(MetricData::Histogram(histogram)) => {
-            serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
-        }
-        AggregatedMetrics::I64(MetricData::Histogram(histogram)) => {
-            serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
-        }
-
-        // Skip exponential histograms
-        _ => {}
-    }
-
-    Ok(())
-}
-
-/// Writes labels for a metric including both attributes and scope labels.
-///
-/// This function orchestrates the streaming output of all metric labels:
-/// 1. Opens the label block with `{` if any labels will be written
-/// 2. Streams attribute labels directly to output
-/// 3. Appends scope information labels
-/// 4. Closes the label block with `}`
-///
-/// The streaming approach means no intermediate collections are built -
-/// everything is written directly to the final output.
-fn write_metric_labels<W: Write>(
-    attributes: impl Iterator<Item = KeyValue>,
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-    has_additional_labels: bool,
-) -> std::io::Result<()> {
-    // Check if we have any attributes or scope info to write
-    let attrs: Vec<_> = attributes.collect();
-    let scope = scope_metrics.scope();
-    let has_scope_name = !scope.name().is_empty();
-    let has_scope_version = scope.version().map_or(false, |v| !v.is_empty());
-    let has_scope_schema = scope.schema_url().map_or(false, |v| !v.is_empty());
-    let has_scope_attrs = scope.attributes().next().is_some();
-
-    let will_have_labels = !attrs.is_empty()
-        || has_scope_name
-        || has_scope_version
-        || has_scope_schema
-        || has_scope_attrs
-        || has_additional_labels;
-
-    if will_have_labels {
-        write!(writer, "{{")?;
-
-        let wrote_attrs = write_attributes_as_labels(attrs.into_iter(), writer)?;
-
-        if wrote_attrs || has_scope_name || has_scope_version || has_scope_schema || has_scope_attrs
-        {
-            write_scope_labels(scope_metrics, writer)?;
-        }
-
-        write!(writer, "}}")?;
-    }
-
-    Ok(())
-}
-
-/// Writes bucket labels including the `le` label.
-fn write_bucket_labels<W: Write>(
-    attributes: impl Iterator<Item = KeyValue>,
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    le_value: &str,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    write!(writer, "{{")?;
-
-    // Write attributes first
-    let has_attrs = write_attributes_as_labels(attributes, writer)?;
-
-    // Add le label
-    if has_attrs {
-        write!(writer, ",le={}", escape_label_value(le_value))?;
-    } else {
-        write!(writer, "le={}", escape_label_value(le_value))?;
-    }
-
-    // Add scope labels
-    write_scope_labels(scope_metrics, writer)?;
-
-    write!(writer, "}}")?;
-    Ok(())
-}
-
-fn serialize_gauge<T: Numeric, W: Write>(
-    name: &str,
-    gauge: &Gauge<T>,
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    for data_point in gauge.data_points() {
-        write!(writer, "{}", name)?;
-        write_metric_labels(
-            data_point.attributes().cloned(),
-            scope_metrics,
-            writer,
-            false,
-        )?;
-        write!(writer, " ")?;
-        data_point.value().serialize(writer)?;
-        write!(writer, "\n")?;
-    }
-
-    Ok(())
-}
-
-fn serialize_sum<T: Numeric, W: Write>(
-    name: &str,
-    sum: &Sum<T>,
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    for data_point in sum.data_points() {
-        write!(writer, "{}", name)?;
-        write_metric_labels(
-            data_point.attributes().cloned(),
-            scope_metrics,
-            writer,
-            false,
-        )?;
-        write!(writer, " ")?;
-        data_point.value().serialize(writer)?;
-        write!(writer, "\n")?;
-    }
-
-    Ok(())
-}
-
-fn serialize_histogram<T: Numeric, W: Write>(
-    name: &str,
-    histogram: &Histogram<T>,
-    scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    for data_point in histogram.data_points() {
-        // _count metric
-        write!(writer, "{}_count", name)?;
-        write_metric_labels(
-            data_point.attributes().cloned(),
-            scope_metrics,
-            writer,
-            false,
-        )?;
-        write!(writer, " ")?;
-        data_point.count().serialize(writer)?;
-        write!(writer, "\n")?;
-
-        // _sum metric
-        write!(writer, "{}_sum", name)?;
-        write_metric_labels(
-            data_point.attributes().cloned(),
-            scope_metrics,
-            writer,
-            false,
-        )?;
-        write!(writer, " ")?;
-        data_point.sum().serialize(writer)?;
-        write!(writer, "\n")?;
-
-        // _bucket metrics
-        let mut cumulative_count = 0u64;
-        for (bound, count) in data_point.bounds().zip(data_point.bucket_counts()) {
-            cumulative_count += count;
-
-            write!(writer, "{}_bucket", name)?;
-            write_bucket_labels(
-                data_point.attributes().cloned(),
-                scope_metrics,
-                &bound.to_string(),
-                writer,
-            )?;
-            write!(writer, " ")?;
-            cumulative_count.serialize(writer)?;
-            write!(writer, "\n")?;
-        }
-
-        // Final +Inf bucket
-        write!(writer, "{}_bucket", name)?;
-        write_bucket_labels(
-            data_point.attributes().cloned(),
-            scope_metrics,
-            "+Inf",
-            writer,
-        )?;
-        write!(writer, " ")?;
-        data_point.count().serialize(writer)?;
-        write!(writer, "\n")?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -855,83 +755,52 @@ mod tests {
     }
 
     #[test]
-    fn test_streaming_approach_avoids_allocations() {
-        use std::io::Cursor;
-
-        // This test demonstrates that our streaming approach writes directly
-        // to the output without building intermediate collections
-
-        let mut output = Cursor::new(Vec::new());
-
-        // Create some test attributes
-        let attrs = vec![
-            KeyValue::new("method", "GET"),
-            KeyValue::new("status", "200"),
-            KeyValue::new("path", "/api/users"),
-        ];
-
-        // Test writing attributes directly to writer
-        output.write_all(b"test_metric{").unwrap();
-        let wrote_attrs = write_attributes_as_labels(attrs.into_iter(), &mut output).unwrap();
-        assert!(wrote_attrs);
-        output.write_all(b"} 42\n").unwrap();
-
-        let result = String::from_utf8(output.into_inner()).unwrap();
-
-        // Verify the output contains properly formatted labels
-        assert!(result.contains("test_metric{"));
-        assert!(result.contains("method=\"GET\""));
-        assert!(result.contains("status=\"200\""));
-        assert!(result.contains("path=\"/api/users\""));
-        assert!(result.contains("} 42"));
-
-        // The key benefit: no intermediate Vec<(String, String)> was created!
-        // Labels were written directly to the output stream as they were processed.
-        //
-        // Performance characteristics:
-        // - O(1) memory usage per attribute (no accumulation)
-        // - O(n) write operations where n = number of attributes
-        // - Conflicts only allocate for the specific conflicting values
-        // - No sorting overhead (deterministic order not required)
-    }
-
-    #[test]
-    fn test_add_unit_suffix_no_allocation_when_unchanged() {
-        // Cases where no suffix is needed should return Cow::Borrowed
+    fn test_escape_help_text() {
         let cases = vec![
-            ("metric_name", ""),                // empty unit
-            ("metric_name_seconds", "seconds"), // already has suffix
-            ("memory_bytes", "bytes"),          // already has suffix
+            ("Simple description", "Simple description"),
+            ("Description with\nnewline", "Description with\\nnewline"),
+            ("Description with\ttab", "Description with\\ttab"),
+            (
+                "Description with\rcarriage return",
+                "Description with\\rcarriage return",
+            ),
+            (
+                "Description with\\backslash",
+                "Description with\\\\backslash",
+            ),
+            (
+                "Complex\nwith\ttabs\rand\\backslashes",
+                "Complex\\nwith\\ttabs\\rand\\\\backslashes",
+            ),
         ];
 
-        for (name, unit) in cases {
-            match add_unit_suffix(name, unit) {
-                Cow::Borrowed(s) => assert_eq!(s, name),
-                Cow::Owned(_) => panic!(
-                    "Expected borrowed for unchanged name: {} with unit: {}",
-                    name, unit
-                ),
-            }
+        for (input, expected) in cases {
+            assert_eq!(escape_help_text(input), expected);
         }
     }
 
     #[test]
-    fn test_add_unit_suffix_allocation_when_suffix_added() {
-        // Cases where suffix is needed should return Cow::Owned
-        let cases = vec![
-            ("metric_name", "seconds", "metric_name_seconds"),
-            ("http_requests", "total", "http_requests_total"),
-            ("memory", "bytes", "memory_bytes"),
-        ];
+    fn test_write_help_comment_escapes_description() {
+        let mut output = Vec::new();
+        let description = "This is a description\nwith a newline";
 
-        for (name, unit, expected) in cases {
-            match add_unit_suffix(name, unit) {
-                Cow::Borrowed(_) => panic!(
-                    "Expected owned for name needing suffix: {} with unit: {}",
-                    name, unit
-                ),
-                Cow::Owned(s) => assert_eq!(s, expected),
-            }
-        }
+        write_help_comment(&mut output, "test_metric", description).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(
+            result,
+            "# HELP test_metric This is a description\\nwith a newline\n"
+        );
+    }
+
+    #[test]
+    fn test_scope_labels_configuration() {
+        // Test with scope labels enabled (default)
+        let serializer_with_scope = PrometheusSerializer::new();
+        assert!(serializer_with_scope.include_scope_labels);
+
+        // Test with scope labels disabled
+        let serializer_without_scope = PrometheusSerializer::without_scope_labels();
+        assert!(!serializer_without_scope.include_scope_labels);
     }
 }
