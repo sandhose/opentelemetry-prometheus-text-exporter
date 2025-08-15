@@ -1,0 +1,22 @@
+[package]
+name = "opentelemetry-prometheus-exporter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[dependencies.opentelemetry]
+version = "0.30.0"
+default-features = false
+features = ["metrics"]
+
+[dependencies.opentelemetry_sdk]
+version = "0.30.0"
+default-features = false
+features = ["metrics", "experimental_metrics_custom_reader"]
+
+[dev-dependencies]
+insta = "1.43.1"
+
+[[test]]
+name = "it"
