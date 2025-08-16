@@ -1,14 +1,16 @@
 //! OpenTelemetry Prometheus Exporter
 //!
-//! This crate provides a Prometheus exporter for OpenTelemetry metrics that follows
-//! the [OpenTelemetry specification for Prometheus compatibility].
+//! This crate provides a Prometheus exporter for OpenTelemetry metrics that
+//! follows the [OpenTelemetry specification for Prometheus compatibility].
 //!
 //! [OpenTelemetry specification for Prometheus compatibility]: https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/
 //!
 //! # Features
 //!
-//! - **Memory optimized**: Uses `Cow<str>` to avoid unnecessary string allocations
-//! - **Specification compliant**: Properly transforms metric names, units, and labels
+//! - **Memory optimized**: Uses `Cow<str>` to avoid unnecessary string
+//!   allocations
+//! - **Specification compliant**: Properly transforms metric names, units, and
+//!   labels
 //! - **Type mapping**: Correctly maps OTLP metric types to Prometheus types
 //! - **Scope support**: Includes instrumentation scope information as labels
 //! - **Resource attributes**: Converts resource to `target_info` metric
@@ -21,7 +23,15 @@
 //! use opentelemetry_prometheus_exporter::PrometheusExporter;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create exporter with default configuration
 //! let exporter = PrometheusExporter::new();
+//!
+//! // Or use the builder pattern for custom configuration
+//! let exporter = PrometheusExporter::builder()
+//!     .without_units()
+//!     .without_counter_suffixes()
+//!     .build()?;
+//!
 //! let provider = SdkMeterProvider::builder()
 //!     .with_reader(exporter.clone())
 //!     .build();
@@ -62,9 +72,50 @@
 //! # }
 //! ```
 //!
+//! # Configuration Options
+//!
+//! The exporter supports various configuration options through the builder
+//! pattern:
+//!
+//! ```rust
+//! use opentelemetry_prometheus_exporter::PrometheusExporter;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Disable unit suffixes in metric names
+//! let exporter = PrometheusExporter::builder()
+//!     .without_units()
+//!     .build()?;
+//!
+//! // Disable _total suffixes on counters
+//! let exporter = PrometheusExporter::builder()
+//!     .without_counter_suffixes()
+//!     .build()?;
+//!
+//! // Disable target_info metric
+//! let exporter = PrometheusExporter::builder()
+//!     .without_target_info()
+//!     .build()?;
+//!
+//! // Disable scope information (otel_scope_* labels)
+//! let exporter = PrometheusExporter::builder()
+//!     .without_scope_info()
+//!     .build()?;
+//!
+//! // Combine multiple options
+//! let exporter = PrometheusExporter::builder()
+//!     .without_units()
+//!     .without_counter_suffixes()
+//!     .without_target_info()
+//!     .without_scope_info()
+//!     .build()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Memory Optimizations
 //!
-//! The implementation uses `Cow<str>` extensively to avoid unnecessary allocations:
+//! The implementation uses `Cow<str>` extensively to avoid unnecessary
+//! allocations:
 //!
 //! ```rust
 //! # use std::borrow::Cow;
@@ -84,5 +135,5 @@
 pub(crate) mod exporter;
 pub(crate) mod serialize;
 
-pub use self::exporter::PrometheusExporter;
+pub use self::exporter::{ExporterBuilder, ExporterConfig, PrometheusExporter};
 pub use self::serialize::PrometheusSerializer;

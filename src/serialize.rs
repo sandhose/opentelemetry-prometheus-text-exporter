@@ -1,8 +1,8 @@
 //! OpenTelemetry to Prometheus format serialization.
 //!
-//! This module implements the conversion from OpenTelemetry metrics to the Prometheus
-//! text exposition format, following the OpenTelemetry specification for Prometheus
-//! compatibility: https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/
+//! This module implements the conversion from OpenTelemetry metrics to the
+//! Prometheus text exposition format, following the OpenTelemetry specification
+//! for Prometheus compatibility: https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/
 //!
 //! # Transformations Applied
 //!
@@ -21,38 +21,46 @@
 //! - Attribute names are sanitized to follow Prometheus label naming rules
 //! - Instrumentation scope information is added as `otel_scope_*` labels
 
-use opentelemetry::KeyValue;
-use opentelemetry_sdk::{
-    Resource,
-    metrics::{
-        Temporality,
-        data::{AggregatedMetrics, Gauge, Histogram, Metric, MetricData, ResourceMetrics, Sum},
-    },
-};
 use std::borrow::Cow;
-
 use std::io::Write;
+
+use opentelemetry::KeyValue;
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::Temporality;
+use opentelemetry_sdk::metrics::data::{
+    AggregatedMetrics, Gauge, Histogram, Metric, MetricData, ResourceMetrics, Sum,
+};
+
+use crate::exporter::ExporterConfig;
 
 /// Prometheus format serializer with configurable options
 #[derive(Debug, Clone)]
 pub struct PrometheusSerializer {
-    /// Whether to include OpenTelemetry scope labels (otel_scope_name, etc.)
-    pub include_scope_labels: bool,
+    /// Configuration options for the serializer
+    config: ExporterConfig,
 }
 
 impl PrometheusSerializer {
     /// Create a new serializer with default configuration
     pub fn new() -> Self {
         Self {
-            include_scope_labels: true,
+            config: ExporterConfig::default(),
         }
     }
 
     /// Create a new serializer with scope labels disabled
     pub fn without_scope_labels() -> Self {
         Self {
-            include_scope_labels: false,
+            config: ExporterConfig {
+                disable_scope_info: true,
+                ..ExporterConfig::default()
+            },
         }
+    }
+
+    /// Create a new serializer with the given configuration
+    pub fn with_config(config: ExporterConfig) -> Self {
+        Self { config }
     }
 
     /// Serialize ResourceMetrics to Prometheus format
@@ -81,8 +89,8 @@ impl PrometheusSerializer {
         resource: &Resource,
         writer: &mut W,
     ) -> std::io::Result<()> {
-        // Don't serialize empty resources
-        if resource.is_empty() {
+        // Don't serialize empty resources or if target_info is disabled
+        if resource.is_empty() || self.config.disable_target_info {
             return Ok(());
         }
 
@@ -130,7 +138,13 @@ impl PrometheusSerializer {
 
         // Apply name transformations
         let sanitized_name = sanitize_name(metric.name());
-        let converted_unit = convert_unit(metric.unit());
+
+        // Convert units only if not disabled
+        let converted_unit = if self.config.without_units {
+            Cow::Borrowed("")
+        } else {
+            convert_unit(metric.unit())
+        };
 
         // Add unit suffix if needed and not already present
         let final_name = if converted_unit.is_empty() {
@@ -139,8 +153,11 @@ impl PrometheusSerializer {
             add_unit_suffix(sanitized_name.as_ref(), converted_unit.as_ref())
         };
 
-        // Add _total suffix for monotonic sums if needed
-        let final_name = if is_monotonic && !final_name.ends_with("_total") {
+        // Add _total suffix for monotonic sums if needed and not disabled
+        let final_name = if is_monotonic
+            && !self.config.without_counter_suffixes
+            && !final_name.ends_with("_total")
+        {
             Cow::Owned(format!("{final_name}_total"))
         } else {
             final_name
@@ -198,7 +215,7 @@ impl PrometheusSerializer {
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         label_writer: &mut LabelWriter<W>,
     ) -> std::io::Result<()> {
-        if !self.include_scope_labels {
+        if self.config.disable_scope_info {
             return Ok(());
         }
         let scope = scope_metrics.scope();
@@ -398,7 +415,8 @@ impl Numeric for i64 {
 
 /// Sanitizes a metric or label name to follow Prometheus naming conventions.
 ///
-/// Prometheus metric and label names must match the regex: `[a-zA-Z_:]([a-zA-Z0-9_:])*`
+/// Prometheus metric and label names must match the regex:
+/// `[a-zA-Z_:]([a-zA-Z0-9_:])*`
 ///
 /// # Transformations
 ///
@@ -466,7 +484,8 @@ fn sanitize_name(name: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-/// Converts OTLP unit to Prometheus unit following the OpenTelemetry specification.
+/// Converts OTLP unit to Prometheus unit following the OpenTelemetry
+/// specification.
 ///
 /// # Transformations
 ///
@@ -599,7 +618,8 @@ fn write_help_comment<W: Write>(
     Ok(())
 }
 
-/// Escapes special characters in HELP comment text according to Prometheus format.
+/// Escapes special characters in HELP comment text according to Prometheus
+/// format.
 fn escape_help_text(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('\n', "\\n")
@@ -801,10 +821,66 @@ mod tests {
     fn test_scope_labels_configuration() {
         // Test with scope labels enabled (default)
         let serializer_with_scope = PrometheusSerializer::new();
-        assert!(serializer_with_scope.include_scope_labels);
+        assert!(!serializer_with_scope.config.disable_scope_info);
 
         // Test with scope labels disabled
         let serializer_without_scope = PrometheusSerializer::without_scope_labels();
-        assert!(!serializer_without_scope.include_scope_labels);
+        assert!(serializer_without_scope.config.disable_scope_info);
+    }
+
+    #[test]
+    fn test_without_units_configuration() {
+        use crate::exporter::ExporterConfig;
+
+        let config = ExporterConfig {
+            without_units: true,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(serializer.config.without_units);
+    }
+
+    #[test]
+    fn test_without_counter_suffixes_configuration() {
+        use crate::exporter::ExporterConfig;
+
+        let config = ExporterConfig {
+            without_counter_suffixes: true,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(serializer.config.without_counter_suffixes);
+    }
+
+    #[test]
+    fn test_without_target_info_configuration() {
+        use crate::exporter::ExporterConfig;
+
+        let config = ExporterConfig {
+            disable_target_info: true,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(serializer.config.disable_target_info);
+    }
+
+    #[test]
+    fn test_configuration_options_behavior() {
+        use crate::exporter::ExporterConfig;
+
+        // Test without units
+        let config = ExporterConfig {
+            without_units: true,
+            ..Default::default()
+        };
+        let _serializer = PrometheusSerializer::with_config(config);
+
+        // Test without counter suffixes
+        let config = ExporterConfig {
+            without_counter_suffixes: true,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(serializer.config.without_counter_suffixes);
     }
 }
