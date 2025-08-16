@@ -2,7 +2,7 @@
 //!
 //! This module implements the conversion from OpenTelemetry metrics to the
 //! Prometheus text exposition format, following the OpenTelemetry specification
-//! for Prometheus compatibility: https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/
+//! for Prometheus compatibility: <https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/>
 //!
 //! # Transformations Applied
 //!

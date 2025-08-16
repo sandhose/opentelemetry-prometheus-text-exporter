@@ -1,1 +1,2 @@
-/target
+# Rust build artifacts
+/target/

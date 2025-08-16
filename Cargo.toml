@@ -2,6 +2,20 @@
 name = "opentelemetry-prometheus-text-exporter"
 version = "0.1.0"
 edition = "2024"
+authors = ["Quentin Gliech <quentingliech@gmail.com>"]
+license = "Apache-2.0"
+description = "OpenTelemetry metrics exporter for Prometheus text exposition format"
+repository = "https://github.com/sandhose/opentelemetry-prometheus-text-exporter"
+homepage = "https://github.com/sandhose/opentelemetry-prometheus-text-exporter"
+readme = "README.md"
+keywords = [
+    "opentelemetry",
+    "prometheus",
+    "metrics",
+    "observability",
+    "telemetry",
+]
+categories = ["development-tools::debugging", "development-tools::profiling"]
 
 [dependencies]
 
