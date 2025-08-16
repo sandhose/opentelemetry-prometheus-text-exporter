@@ -19,7 +19,6 @@
 //!
 //! ## Labels
 //! - Attribute names are sanitized to follow Prometheus label naming rules
-//! - Conflicting sanitized names are handled by concatenating values with `;`
 //! - Instrumentation scope information is added as `otel_scope_*` labels
 
 use opentelemetry::KeyValue;
@@ -515,7 +514,7 @@ fn convert_unit(unit: &str) -> Cow<'_, str> {
         "m" => Cow::Borrowed("meters"),
         "kg" => Cow::Borrowed("kilograms"),
         "g" => Cow::Borrowed("grams"),
-        "b" | "bytes" => Cow::Borrowed("bytes"),
+        "b" | "bytes" | "By" => Cow::Borrowed("bytes"),
         "%" => Cow::Borrowed("percent"),
         _ => without_brackets,
     }
@@ -712,15 +711,13 @@ mod tests {
         let cases = vec!["", "custom_unit", "other_unit"];
 
         for case in cases {
-            match convert_unit(case) {
-                Cow::Borrowed(s) => assert_eq!(s.trim(), case),
-                Cow::Owned(_) => panic!("Expected borrowed for unchanged unit: {case}"),
-            }
+            let result = convert_unit(case);
+            assert_eq!(result, Cow::Borrowed(case));
         }
     }
 
     #[test]
-    fn test_convert_unit_allocation_when_converted() {
+    fn test_convert_unit_no_allocation_when_converted() {
         // Units that need conversion should return appropriate result
         let cases = vec![
             ("1", "ratio"),
@@ -732,13 +729,32 @@ mod tests {
             ("b", "bytes"),
             ("bytes", "bytes"),
             ("%", "percent"),
-            ("requests/second", "requests_per_second"),
-            ("count{packets}", "count"), // bracket removal
+            ("count{packets}", "count"),
         ];
 
         for (input, expected) in cases {
             let result = convert_unit(input);
-            assert_eq!(result.as_ref(), expected);
+            match result {
+                Cow::Borrowed(s) => assert_eq!(s, expected),
+                Cow::Owned(_) => panic!("Expected borrowed for unchanged unit: {expected}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_unit_allocation_when_converted() {
+        // Units that need conversion should return appropriate result
+        let cases = vec![
+            ("something{packets}else", "somethingelse"),
+            ("requests/second", "requests_per_second"),
+        ];
+
+        for (input, expected) in cases {
+            let result = convert_unit(input);
+            match result {
+                Cow::Owned(s) => assert_eq!(s, expected),
+                Cow::Borrowed(_) => panic!("Expected owned for converted unit: {input}"),
+            }
         }
     }
 
