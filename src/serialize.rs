@@ -100,7 +100,7 @@ impl PrometheusSerializer {
         }
         label_writer.finish()?;
 
-        write!(writer, " 1\n")?;
+        writeln!(writer, " 1")?;
 
         Ok(())
     }
@@ -124,9 +124,9 @@ impl PrometheusSerializer {
     ) -> std::io::Result<()> {
         let data = metric.data();
 
-        let (prometheus_type, is_monotonic) = match get_prometheus_type_and_is_monotonic(data) {
-            Some(result) => result,
-            None => return Ok(()), // Skip unsupported metrics
+        let Some((prometheus_type, is_monotonic)) = get_prometheus_type_and_is_monotonic(data)
+        else {
+            return Ok(()); // Skip unsupported metrics
         };
 
         // Apply name transformations
@@ -142,10 +142,7 @@ impl PrometheusSerializer {
 
         // Add _total suffix for monotonic sums if needed
         let final_name = if is_monotonic && !final_name.ends_with("_total") {
-            match final_name {
-                Cow::Borrowed(s) => Cow::Owned(format!("{}_total", s)),
-                Cow::Owned(s) => Cow::Owned(format!("{}_total", s)),
-            }
+            Cow::Owned(format!("{final_name}_total"))
         } else {
             final_name
         };
@@ -157,33 +154,33 @@ impl PrometheusSerializer {
 
         match data {
             AggregatedMetrics::F64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), &gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
             }
             AggregatedMetrics::U64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), &gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
             }
             AggregatedMetrics::I64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), &gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
             }
 
             AggregatedMetrics::F64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), &sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
             }
             AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), &sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
             }
             AggregatedMetrics::I64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), &sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
             }
 
             AggregatedMetrics::F64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), &histogram, scope_metrics, writer)?;
+                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
             }
             AggregatedMetrics::U64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), &histogram, scope_metrics, writer)?;
+                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
             }
             AggregatedMetrics::I64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), &histogram, scope_metrics, writer)?;
+                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
             }
 
             // Skip exponential histograms
@@ -192,7 +189,7 @@ impl PrometheusSerializer {
             | AggregatedMetrics::I64(MetricData::ExponentialHistogram(_)) => {}
         }
 
-        write!(writer, "\n")?;
+        writeln!(writer)?;
 
         Ok(())
     }
@@ -278,11 +275,11 @@ impl PrometheusSerializer {
         writer: &mut W,
     ) -> std::io::Result<()> {
         for data_point in gauge.data_points() {
-            write!(writer, "{}", name)?;
+            write!(writer, "{name}")?;
             self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.value().serialize(writer)?;
-            write!(writer, "\n")?;
+            writeln!(writer)?;
         }
 
         Ok(())
@@ -296,11 +293,11 @@ impl PrometheusSerializer {
         writer: &mut W,
     ) -> std::io::Result<()> {
         for data_point in sum.data_points() {
-            write!(writer, "{}", name)?;
+            write!(writer, "{name}")?;
             self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.value().serialize(writer)?;
-            write!(writer, "\n")?;
+            writeln!(writer)?;
         }
 
         Ok(())
@@ -315,25 +312,25 @@ impl PrometheusSerializer {
     ) -> std::io::Result<()> {
         for data_point in histogram.data_points() {
             // _count metric
-            write!(writer, "{}_count", name)?;
+            write!(writer, "{name}_count")?;
             self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.count().serialize(writer)?;
-            write!(writer, "\n")?;
+            writeln!(writer)?;
 
             // _sum metric
-            write!(writer, "{}_sum", name)?;
+            write!(writer, "{name}_sum")?;
             self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.sum().serialize(writer)?;
-            write!(writer, "\n")?;
+            writeln!(writer)?;
 
             // _bucket metrics
             let mut cumulative_count = 0u64;
             for (bound, count) in data_point.bounds().zip(data_point.bucket_counts()) {
                 cumulative_count += count;
 
-                write!(writer, "{}_bucket", name)?;
+                write!(writer, "{name}_bucket")?;
                 self.write_bucket_labels(
                     data_point.attributes().cloned(),
                     scope_metrics,
@@ -342,11 +339,11 @@ impl PrometheusSerializer {
                 )?;
                 write!(writer, " ")?;
                 cumulative_count.serialize(writer)?;
-                write!(writer, "\n")?;
+                writeln!(writer)?;
             }
 
             // +Inf bucket
-            write!(writer, "{}_bucket", name)?;
+            write!(writer, "{name}_bucket")?;
             self.write_bucket_labels(
                 data_point.attributes().cloned(),
                 scope_metrics,
@@ -355,7 +352,7 @@ impl PrometheusSerializer {
             )?;
             write!(writer, " ")?;
             data_point.count().serialize(writer)?;
-            write!(writer, "\n")?;
+            writeln!(writer)?;
         }
 
         Ok(())
@@ -383,20 +380,20 @@ impl Numeric for f64 {
                 write!(writer, "-Inf")
             }
         } else {
-            write!(writer, "{}", self)
+            write!(writer, "{self}")
         }
     }
 }
 
 impl Numeric for u64 {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        write!(writer, "{}", self)
+        write!(writer, "{self}")
     }
 }
 
 impl Numeric for i64 {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        write!(writer, "{}", self)
+        write!(writer, "{self}")
     }
 }
 
@@ -405,6 +402,7 @@ impl Numeric for i64 {
 /// Prometheus metric and label names must match the regex: `[a-zA-Z_:]([a-zA-Z0-9_:])*`
 ///
 /// # Transformations
+///
 /// - First character must be `[a-zA-Z_:]`, invalid chars become `_`
 /// - Subsequent characters must be `[a-zA-Z0-9_:]`, invalid chars become `_`
 /// - Multiple consecutive underscores are collapsed to single `_`
@@ -485,35 +483,33 @@ fn convert_unit(unit: &str) -> Cow<'_, str> {
     }
 
     // Remove content within brackets if present
-    let without_brackets = if let Some(start) = trimmed.find('{') {
-        if let Some(end) = trimmed.find('}') {
-            let mut result = String::with_capacity(trimmed.len());
-            result.push_str(&trimmed[..start]);
-            if end + 1 < trimmed.len() {
-                result.push_str(&trimmed[end + 1..]);
-            }
-            Cow::Owned(result.trim().to_string())
+    let without_brackets = if let Some((before, middle)) = trimmed.split_once('{')
+        && let Some((_middle, after)) = middle.split_once('}')
+    {
+        // We can return a borrowed string if one of the side is empty
+        if before.is_empty() {
+            Cow::Borrowed(after)
+        } else if after.is_empty() {
+            Cow::Borrowed(before)
         } else {
-            Cow::Borrowed(trimmed)
+            Cow::Owned(format!("{before}{after}"))
         }
     } else {
         Cow::Borrowed(trimmed)
     };
 
-    let final_unit = without_brackets.as_ref();
-
     // Special cases
-    if final_unit == "1" {
+    if &without_brackets == "1" {
         return Cow::Borrowed("ratio");
     }
 
     // Convert foo/bar to foo_per_bar
-    if final_unit.contains('/') {
-        return Cow::Owned(final_unit.replace('/', "_per_"));
+    if without_brackets.contains('/') {
+        return Cow::Owned(without_brackets.replace('/', "_per_"));
     }
 
     // Convert abbreviations to full words
-    match final_unit {
+    match &*without_brackets {
         "ms" => Cow::Borrowed("milliseconds"),
         "s" => Cow::Borrowed("seconds"),
         "m" => Cow::Borrowed("meters"),
@@ -521,15 +517,7 @@ fn convert_unit(unit: &str) -> Cow<'_, str> {
         "g" => Cow::Borrowed("grams"),
         "b" | "bytes" => Cow::Borrowed("bytes"),
         "%" => Cow::Borrowed("percent"),
-        _ => {
-            // If no conversion needed and input is unchanged, return original
-            if final_unit == trimmed {
-                Cow::Borrowed(unit.trim())
-            } else {
-                // We had to process it (remove brackets), so return owned
-                Cow::Owned(final_unit.to_string())
-            }
-        }
+        _ => without_brackets,
     }
 }
 
@@ -538,7 +526,7 @@ fn add_unit_suffix<'a>(name: &'a str, unit: &str) -> Cow<'a, str> {
     if unit.is_empty() || name.ends_with(unit) {
         Cow::Borrowed(name)
     } else {
-        Cow::Owned(format!("{}_{}", name, unit))
+        Cow::Owned(format!("{name}_{unit}"))
     }
 }
 
@@ -596,7 +584,7 @@ fn write_type_comment<W: Write>(
     name: &str,
     metric_type: &str,
 ) -> std::io::Result<()> {
-    write!(writer, "# TYPE {} {}\n", name, metric_type)
+    writeln!(writer, "# TYPE {name} {metric_type}")
 }
 
 /// Writes HELP comment
@@ -607,7 +595,7 @@ fn write_help_comment<W: Write>(
 ) -> std::io::Result<()> {
     if !description.is_empty() {
         let escaped_description = escape_help_text(description);
-        write!(writer, "# HELP {} {}\n", name, escaped_description)?;
+        writeln!(writer, "# HELP {name} {escaped_description}")?;
     }
     Ok(())
 }
@@ -623,7 +611,7 @@ fn escape_help_text(text: &str) -> String {
 /// Writes UNIT comment
 fn write_unit_comment<W: Write>(writer: &mut W, name: &str, unit: &str) -> std::io::Result<()> {
     if !unit.is_empty() {
-        write!(writer, "# UNIT {} {}\n", name, unit)?;
+        writeln!(writer, "# UNIT {name} {unit}")?;
     }
     Ok(())
 }
@@ -688,7 +676,7 @@ mod tests {
         for case in cases {
             match sanitize_name(case) {
                 Cow::Borrowed(s) => assert_eq!(s, case),
-                Cow::Owned(_) => panic!("Expected borrowed for valid name: {}", case),
+                Cow::Owned(_) => panic!("Expected borrowed for valid name: {case}"),
             }
         }
     }
@@ -706,7 +694,7 @@ mod tests {
 
         for (input, expected) in cases {
             match sanitize_name(input) {
-                Cow::Borrowed(_) => panic!("Expected owned for invalid name: {}", input),
+                Cow::Borrowed(_) => panic!("Expected owned for invalid name: {input}"),
                 Cow::Owned(s) => assert_eq!(s, expected),
             }
         }
@@ -726,7 +714,7 @@ mod tests {
         for case in cases {
             match convert_unit(case) {
                 Cow::Borrowed(s) => assert_eq!(s.trim(), case),
-                Cow::Owned(_) => panic!("Expected borrowed for unchanged unit: {}", case),
+                Cow::Owned(_) => panic!("Expected borrowed for unchanged unit: {case}"),
             }
         }
     }
