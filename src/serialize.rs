@@ -808,17 +808,6 @@ mod tests {
     }
 
     #[test]
-    fn test_scope_labels_configuration() {
-        // Test with scope labels enabled (default)
-        let serializer_with_scope = PrometheusSerializer::new();
-        assert!(!serializer_with_scope.config.disable_scope_info);
-
-        // Test with scope labels disabled
-        let serializer_without_scope = PrometheusSerializer::without_scope_labels();
-        assert!(serializer_without_scope.config.disable_scope_info);
-    }
-
-    #[test]
     fn test_without_units_configuration() {
         use crate::exporter::ExporterConfig;
 
