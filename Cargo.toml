@@ -15,8 +15,16 @@ version = "0.30.0"
 default-features = false
 features = ["metrics", "experimental_metrics_custom_reader"]
 
+[dependencies.smartstring]
+version = "1.0.1"
+
 [dev-dependencies]
 insta = "1.43.1"
+criterion = "0.5"
 
 [[test]]
 name = "it"
+
+[[bench]]
+name = "serialize"
+harness = false

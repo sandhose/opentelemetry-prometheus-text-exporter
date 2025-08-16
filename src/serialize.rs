@@ -22,6 +22,7 @@
 //! - Instrumentation scope information is added as `otel_scope_*` labels
 
 use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::io::Write;
 
 use opentelemetry::KeyValue;
@@ -30,6 +31,7 @@ use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, Gauge, Histogram, Metric, MetricData, ResourceMetrics, Sum,
 };
+use smartstring::SmartString;
 
 use crate::exporter::ExporterConfig;
 
@@ -102,8 +104,9 @@ impl PrometheusSerializer {
         let mut label_writer = LabelWriter::new(writer);
         for (key, value) in resource.iter() {
             let sanitized_key = sanitize_name(key.as_str());
-            let value_str = format!("{value}");
-            label_writer.emit(&sanitized_key, &value_str)?;
+            let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
+            write!(&mut value_buf, "{}", value).map_err(std::io::Error::other)?;
+            label_writer.emit(&sanitized_key, &value_buf)?;
         }
         label_writer.finish()?;
 
@@ -253,9 +256,9 @@ impl PrometheusSerializer {
         Ok(())
     }
 
-    fn write_metric_labels<W: Write>(
+    fn write_metric_labels<'a, W: Write>(
         &self,
-        attributes: impl Iterator<Item = KeyValue>,
+        attributes: impl Iterator<Item = &'a KeyValue>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
     ) -> std::io::Result<()> {
@@ -267,9 +270,9 @@ impl PrometheusSerializer {
         label_writer.finish()
     }
 
-    fn write_bucket_labels<W: Write>(
+    fn write_bucket_labels<'a, W: Write>(
         &self,
-        attributes: impl Iterator<Item = KeyValue>,
+        attributes: impl Iterator<Item = &'a KeyValue>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         le_value: &str,
         writer: &mut W,
@@ -292,7 +295,7 @@ impl PrometheusSerializer {
     ) -> std::io::Result<()> {
         for data_point in gauge.data_points() {
             write!(writer, "{name}")?;
-            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.value().serialize(writer)?;
             writeln!(writer)?;
@@ -310,7 +313,7 @@ impl PrometheusSerializer {
     ) -> std::io::Result<()> {
         for data_point in sum.data_points() {
             write!(writer, "{name}")?;
-            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.value().serialize(writer)?;
             writeln!(writer)?;
@@ -329,14 +332,14 @@ impl PrometheusSerializer {
         for data_point in histogram.data_points() {
             // _count metric
             write!(writer, "{name}_count")?;
-            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.count().serialize(writer)?;
             writeln!(writer)?;
 
             // _sum metric
             write!(writer, "{name}_sum")?;
-            self.write_metric_labels(data_point.attributes().cloned(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
             write!(writer, " ")?;
             data_point.sum().serialize(writer)?;
             writeln!(writer)?;
@@ -348,7 +351,7 @@ impl PrometheusSerializer {
 
                 write!(writer, "{name}_bucket")?;
                 self.write_bucket_labels(
-                    data_point.attributes().cloned(),
+                    data_point.attributes(),
                     scope_metrics,
                     &bound.to_string(),
                     writer,
@@ -360,12 +363,7 @@ impl PrometheusSerializer {
 
             // +Inf bucket
             write!(writer, "{name}_bucket")?;
-            self.write_bucket_labels(
-                data_point.attributes().cloned(),
-                scope_metrics,
-                "+Inf",
-                writer,
-            )?;
+            self.write_bucket_labels(data_point.attributes(), scope_metrics, "+Inf", writer)?;
             write!(writer, " ")?;
             data_point.count().serialize(writer)?;
             writeln!(writer)?;
@@ -584,14 +582,16 @@ impl<'a, W: Write> LabelWriter<'a, W> {
     }
 }
 
-fn write_attributes_as_labels<W: Write>(
-    attributes: impl Iterator<Item = KeyValue>,
+fn write_attributes_as_labels<'a, W: Write>(
+    attributes: impl Iterator<Item = &'a KeyValue>,
     label_writer: &mut LabelWriter<W>,
 ) -> std::io::Result<()> {
     for attr in attributes {
+        // This avoids allocating for small attribute values
+        let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
         let sanitized_key = sanitize_name(attr.key.as_str());
-        let value = format!("{}", attr.value);
-        label_writer.emit(sanitized_key.as_ref(), &value)?;
+        write!(&mut value_buf, "{}", attr.value).map_err(std::io::Error::other)?;
+        label_writer.emit(sanitized_key.as_ref(), &value_buf)?;
     }
     Ok(())
 }

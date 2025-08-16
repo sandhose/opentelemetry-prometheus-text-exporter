@@ -95,13 +95,61 @@
 - **Direct writing**: Write to provided writer without intermediate buffering
 - **Single-pass**: Process metrics in one iteration
 
-### 6. Prometheus Compliance
+### 6. Benchmarking
+
+#### Benchmark Suite
+- **Location**: `benches/serialize.rs`
+- **Focus**: Counter metrics (most common type in production)
+- **Methodology**: Uses fake writer (`DevNull`) to isolate serialization performance
+
+#### Benchmark Categories
+- **Metrics Count**: Scaling with number of different metrics (1-100)
+- **Cardinality**: Scaling with label combinations per metric (1-250)
+- **Total Time Series**: Scaling with metrics × cardinality (100-10,000 time series)
+- **Configurations**: Performance impact of different exporter options
+- **Realistic Scenarios**: Real-world workload patterns
+- **Memory Patterns**: `Cow<str>` optimization effectiveness
+
+#### Running Benchmarks
+```bash
+# Quick feedback (reduced sample size)
+cargo bench --bench serialize -- --quick
+
+# Full benchmark suite
+cargo bench --bench serialize
+
+# Specific benchmark groups
+cargo bench --bench serialize -- metrics_count
+cargo bench --bench serialize -- cardinality
+cargo bench --bench serialize -- total_time_series
+cargo bench --bench serialize -- configurations
+```
+
+#### Performance Expectations
+- **Linear scaling** with both metric count and cardinality
+- **Consistent throughput** of ~1.5-1.8 million time series per second
+- **Minimal configuration overhead** (< 5% difference between options)
+- **Memory optimization benefits** for clean metric names
+- **Production performance**: Small services < 100µs, large services < 10ms
+
+#### Parametric Benchmarking Features
+- **Automatic scaling plots**: Line charts showing performance vs input parameters
+- **Throughput measurements**: Time series per second for easy comparison
+- **Statistical analysis**: Regression analysis and confidence intervals
+- **Benchmark groups**: Related benchmarks plotted together for comparison
+
+#### Extending Benchmarks
+- Create new setup functions for different metric types (histograms, gauges)
+- Add realistic label patterns for your use case
+- Follow existing patterns for proper provider lifetime management
+
+### 7. Prometheus Compliance
 
 #### Metric Type Support
 - ✅ **Gauges**: All numeric types → Prometheus Gauge
 - ✅ **Sums**: Cumulative+Monotonic → Counter, Cumulative+Non-monotonic → Gauge
 - ✅ **Histograms**: All numeric types → Prometheus Histogram family
-- ❌ **Exponential histograms**: Currently skipped (future enhancement)
+- ❌ **Exponential histograms**: Currently skipped, unsupported by Prometheus
 
 #### Name & Unit Transformations
 - **Sanitization**: Invalid chars → `_`, collapse multiple `_`
@@ -113,7 +161,7 @@
 - **Values**: Proper NaN, ±Inf handling for f64
 - **Text Format**: Valid Prometheus exposition format
 
-### 7. Development Commands
+### 8. Development Commands
 
 ```bash
 # Development cycle
@@ -132,7 +180,7 @@ cargo test --all-targets      # All tests
 cargo clippy --tests         # All lint checks
 ```
 
-### 8. File Structure
+### 9. File Structure
 
 ```
 src/
@@ -141,12 +189,14 @@ src/
 └── serialize.rs    # Core conversion logic (PrometheusSerializer)
 tests/
 └── it/main.rs      # Integration tests with snapshot testing
+benches/
+└── serialize.rs    # Performance benchmarks with criterion
 .rustfmt.toml         # Rustfmt configuration
 .rules                # Rules for LLMs
 Cargo.toml            # Project manifest
 ```
 
-### 9. Contribution Guidelines
+### 10. Contribution Guidelines
 
 - **Breaking changes**: Discuss first, maintain backward compatibility
 - **New features**: Add comprehensive tests and documentation
@@ -154,8 +204,10 @@ Cargo.toml            # Project manifest
 - **Documentation**: Update examples when changing APIs
 - **Performance**: Maintain memory optimization patterns
 
-### 10. Dependencies
+### 11. Dependencies
 
-- `opentelemetry` 0.30.0 (metrics feature only)
-- `opentelemetry_sdk` 0.30.0 (metrics + experimental_metrics_custom_reader)
-- `insta` 1.43.1 (dev dependency for snapshot testing)
+- `opentelemetry` (metrics feature only)
+- `opentelemetry_sdk` (metrics + experimental_metrics_custom_reader)
+- `smartstring` (for avoiding allocations when possible)
+- `insta` (dev dependency for snapshot testing)
+- `criterion` (dev dependency for performance benchmarking)
