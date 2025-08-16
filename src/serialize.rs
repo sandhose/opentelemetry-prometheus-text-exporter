@@ -37,7 +37,7 @@ use crate::exporter::ExporterConfig;
 
 /// Prometheus format serializer with configurable options
 #[derive(Debug, Clone)]
-pub struct PrometheusSerializer {
+pub(crate) struct PrometheusSerializer {
     /// Configuration options for the serializer
     config: ExporterConfig,
 }
@@ -47,16 +47,6 @@ impl PrometheusSerializer {
     pub fn new() -> Self {
         Self {
             config: ExporterConfig::default(),
-        }
-    }
-
-    /// Create a new serializer with scope labels disabled
-    pub fn without_scope_labels() -> Self {
-        Self {
-            config: ExporterConfig {
-                disable_scope_info: true,
-                ..ExporterConfig::default()
-            },
         }
     }
 

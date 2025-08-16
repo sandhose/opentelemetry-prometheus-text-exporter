@@ -9,13 +9,14 @@ use crate::serialize::PrometheusSerializer;
 
 /// Configuration for the Prometheus exporter
 #[derive(Debug, Clone, Copy, Default)]
-pub struct ExporterConfig {
+pub(crate) struct ExporterConfig {
     pub disable_target_info: bool,
     pub without_units: bool,
     pub without_counter_suffixes: bool,
     pub disable_scope_info: bool,
 }
 
+/// Prometheus metrics exporter, using the text exposition format
 #[derive(Clone, Debug)]
 pub struct PrometheusExporter {
     inner: Arc<ManualReader>,
