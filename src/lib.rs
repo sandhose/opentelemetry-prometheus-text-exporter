@@ -30,7 +30,7 @@
 //! let exporter = PrometheusExporter::builder()
 //!     .without_units()
 //!     .without_counter_suffixes()
-//!     .build()?;
+//!     .build();
 //!
 //! let provider = SdkMeterProvider::builder()
 //!     .with_reader(exporter.clone())
@@ -80,26 +80,25 @@
 //! ```rust
 //! use opentelemetry_prometheus_exporter::PrometheusExporter;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Disable unit suffixes in metric names
 //! let exporter = PrometheusExporter::builder()
 //!     .without_units()
-//!     .build()?;
+//!     .build();
 //!
 //! // Disable _total suffixes on counters
 //! let exporter = PrometheusExporter::builder()
 //!     .without_counter_suffixes()
-//!     .build()?;
+//!     .build();
 //!
 //! // Disable target_info metric
 //! let exporter = PrometheusExporter::builder()
 //!     .without_target_info()
-//!     .build()?;
+//!     .build();
 //!
 //! // Disable scope information (otel_scope_* labels)
 //! let exporter = PrometheusExporter::builder()
 //!     .without_scope_info()
-//!     .build()?;
+//!     .build();
 //!
 //! // Combine multiple options
 //! let exporter = PrometheusExporter::builder()
@@ -107,31 +106,14 @@
 //!     .without_counter_suffixes()
 //!     .without_target_info()
 //!     .without_scope_info()
-//!     .build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Memory Optimizations
-//!
-//! The implementation uses `Cow<str>` extensively to avoid unnecessary
-//! allocations:
-//!
-//! ```rust
-//! # use std::borrow::Cow;
-//! # use opentelemetry_prometheus_exporter::PrometheusExporter;
-//! // Valid metric names are not modified (no allocation)
-//! // sanitize_name("valid_metric_name") -> Cow::Borrowed("valid_metric_name")
-//!
-//! // Invalid names are sanitized (allocation only when needed)
-//! // sanitize_name("invalid.metric.name") -> Cow::Owned("invalid_metric_name")
-//!
-//! // Units are converted only when necessary
-//! // convert_unit("s") -> Cow::Borrowed("seconds")
-//! // convert_unit("custom_unit") -> Cow::Borrowed("custom_unit")
+//!     .build();
 //! ```
 
 #[deny(clippy::all, clippy::pedantic)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "The configuration struct has many boolean fields, this is intentional"
+)]
 pub(crate) mod exporter;
 pub(crate) mod serialize;
 

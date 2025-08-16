@@ -8,23 +8,12 @@ use opentelemetry_sdk::metrics::{ManualReader, ManualReaderBuilder, Pipeline};
 use crate::serialize::PrometheusSerializer;
 
 /// Configuration for the Prometheus exporter
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ExporterConfig {
     pub disable_target_info: bool,
     pub without_units: bool,
     pub without_counter_suffixes: bool,
     pub disable_scope_info: bool,
-}
-
-impl Default for ExporterConfig {
-    fn default() -> Self {
-        Self {
-            disable_target_info: false,
-            without_units: false,
-            without_counter_suffixes: false,
-            disable_scope_info: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,18 +51,7 @@ impl PrometheusExporter {
     /// Create a new exporter with default configuration
     #[must_use]
     pub fn new() -> Self {
-        Self::builder()
-            .build()
-            .expect("Failed to build PrometheusExporter")
-    }
-
-    /// Create a new exporter without scope labels
-    #[must_use]
-    pub fn without_scope_labels() -> Self {
-        Self::builder()
-            .without_scope_info()
-            .build()
-            .expect("Failed to build PrometheusExporter")
+        Self::builder().build()
     }
 
     /// Create a new exporter builder
@@ -101,7 +79,7 @@ impl Default for PrometheusExporter {
     }
 }
 
-/// Builder for configuring [PrometheusExporter] with various options.
+/// Builder for configuring [`PrometheusExporter`] with various options.
 ///
 /// This builder implements the same configuration API as the
 /// `opentelemetry-prometheus` crate to provide a compatible replacement. The
@@ -137,15 +115,15 @@ impl Default for PrometheusExporter {
 /// ```rust
 /// use opentelemetry_prometheus_exporter::PrometheusExporter;
 ///
+/// # fn main() {
 /// // Create exporter with default configuration (all features enabled)
-/// let exporter = PrometheusExporter::builder().build().unwrap();
+/// let exporter = PrometheusExporter::builder().build();
 ///
 /// // Create exporter with selective features disabled
 /// let exporter = PrometheusExporter::builder()
 ///     .without_units()
 ///     .without_counter_suffixes()
-///     .build()
-///     .unwrap();
+///     .build();
 ///
 /// // Create exporter with all optional features disabled
 /// let exporter = PrometheusExporter::builder()
@@ -153,8 +131,8 @@ impl Default for PrometheusExporter {
 ///     .without_counter_suffixes()
 ///     .without_target_info()
 ///     .without_scope_info()
-///     .build()
-///     .unwrap();
+///     .build();
+/// # }
 /// ```
 ///
 /// [`without_units()`]: ExporterBuilder::without_units
@@ -177,7 +155,7 @@ impl std::fmt::Debug for ExporterBuilder {
             .field("without_units", &self.without_units)
             .field("without_counter_suffixes", &self.without_counter_suffixes)
             .field("disable_scope_info", &self.disable_scope_info)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -191,6 +169,7 @@ impl ExporterBuilder {
     ///
     /// With this option set, the name would instead be
     /// `request_duration_total`.
+    #[must_use]
     pub fn without_units(mut self) -> Self {
         self.without_units = true;
         self
@@ -202,6 +181,7 @@ impl ExporterBuilder {
     /// naming conventions. For example, the counter metric `happy.people` would
     /// become `happy_people_total`. With this option set, the name would
     /// instead be `happy_people`.
+    #[must_use]
     pub fn without_counter_suffixes(mut self) -> Self {
         self.without_counter_suffixes = true;
         self
@@ -213,6 +193,7 @@ impl ExporterBuilder {
     /// containing the metrics' [Resource] attributes.
     ///
     /// [Resource]: opentelemetry_sdk::Resource
+    #[must_use]
     pub fn without_target_info(mut self) -> Self {
         self.disable_target_info = true;
         self
@@ -223,14 +204,16 @@ impl ExporterBuilder {
     /// If not specified, the exporter will create a `otel_scope_info` metric
     /// containing the metrics' Instrumentation Scope, and also add labels about
     /// Instrumentation Scope to all metric points.
+    #[must_use]
     pub fn without_scope_info(mut self) -> Self {
         self.disable_scope_info = true;
         self
     }
 
-    /// Creates a new [PrometheusExporter] from this configuration.
-    pub fn build(self) -> Result<PrometheusExporter, String> {
-        let reader = Arc::new(self.reader.build());
+    /// Creates a new [`PrometheusExporter`] from this configuration.
+    #[must_use]
+    pub fn build(self) -> PrometheusExporter {
+        let inner = Arc::new(self.reader.build());
 
         let config = ExporterConfig {
             disable_target_info: self.disable_target_info,
@@ -241,9 +224,6 @@ impl ExporterBuilder {
 
         let serializer = PrometheusSerializer::with_config(config);
 
-        Ok(PrometheusExporter {
-            inner: reader,
-            serializer,
-        })
+        PrometheusExporter { inner, serializer }
     }
 }

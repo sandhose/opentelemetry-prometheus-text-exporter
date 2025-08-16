@@ -1,0 +1,161 @@
+# OpenTelemetry Prometheus Exporter Project Rules
+
+## Project Overview
+- **Name**: `opentelemetry-prometheus-exporter`
+- **Purpose**: Converts OpenTelemetry metrics to Prometheus text exposition format
+- **Language**: Rust
+
+## Development Workflow
+
+### 1. Code Changes Process
+1. **First Priority**: Get code compiling
+   ```bash
+   cargo check
+   ```
+
+2. **Second Priority**: Fix clippy issues
+   ```bash
+   cargo clippy --tests
+   ```
+
+3. **Code Formatting**: Format code regularly
+   ```bash
+   cargo +nightly fmt
+   ```
+
+4. **Testing**: Run tests with snapshot testing
+   ```bash
+   cargo insta test
+   cargo insta pending-snapshots  # Review changes if necessary
+   cargo insta accept            # Accept snapshots if correct
+   ```
+
+### 2. Testing Guidelines
+
+#### Snapshot Testing with Insta
+- **Use snapshots when possible** for testing output format
+- **Workflow**:
+  1. `cargo insta test` - Run tests and generate/compare snapshots
+  2. `cargo insta pending-snapshots` - Review pending snapshot changes
+  3. `cargo insta accept` - Accept new/changed snapshots if correct
+- **Best for**: Prometheus text format output, configuration examples
+
+#### Test Structure
+- **Unit tests**: In `src/serialize.rs` and `src/exporter.rs` - test individual functions
+- **Integration tests**: In `tests/it/main.rs` - test complete export workflow
+- **Doc tests**: In lib.rs and module docs - test documentation examples
+
+#### Test Coverage Areas
+- All configuration options (`without_units`, `without_counter_suffixes`, etc.)
+- Memory optimization (Cow<str> usage)
+- Edge cases (empty resources, invalid names, special values)
+- Prometheus format compliance
+
+### 3. Code Quality
+
+#### Clippy Configuration
+- **Pedantic rules enabled** by default in `src/lib.rs`
+- **If clippy rule is annoying**: Discuss with team, okay to add exceptions
+- **Current exceptions**: Check `src/lib.rs` for `#[allow(...)]` attributes
+- **Zero tolerance**: All clippy warnings must be fixed before merge
+
+#### Code Standards
+- **Memory optimization**: Use `Cow<str>` for avoiding unnecessary allocations
+- **Error handling**: Proper error propagation and informative messages
+- **Documentation**: All public APIs must have comprehensive docs with examples
+
+### 4. API Design Guidelines
+
+#### Configuration Options
+- **Builder pattern**: Use `ExporterBuilder` for all configuration
+- **Compatibility**: Maintain API compatibility with `opentelemetry-prometheus` crate
+- **Method naming**: Follow established patterns (`without_*` for disabling features)
+
+#### Supported Configuration
+- `without_units()` - Disable unit suffixes in metric names
+- `without_counter_suffixes()` - Disable `_total` suffixes on counters
+- `without_target_info()` - Disable resource `target_info` metric
+- `without_scope_info()` - Disable OpenTelemetry scope labels
+
+#### NOT Implemented (Excluded)
+- `with_registry()` - Registry management
+- `with_resource_selector()` - Resource filtering
+- `with_namespace()` - Metric name prefixing
+
+### 5. Performance Requirements
+
+#### Memory Optimization
+- **Cow<str> usage**: Avoid allocations when possible
+- **Lazy processing**: Only transform when necessary
+- **Examples**:
+  - Valid names: `Cow::Borrowed` (no allocation)
+  - Invalid names: `Cow::Owned` (allocation only when needed)
+
+#### Streaming
+- **Direct writing**: Write to provided writer without intermediate buffering
+- **Single-pass**: Process metrics in one iteration
+
+### 6. Prometheus Compliance
+
+#### Metric Type Support
+- ✅ **Gauges**: All numeric types → Prometheus Gauge
+- ✅ **Sums**: Cumulative+Monotonic → Counter, Cumulative+Non-monotonic → Gauge
+- ✅ **Histograms**: All numeric types → Prometheus Histogram family
+- ❌ **Exponential histograms**: Currently skipped (future enhancement)
+
+#### Name & Unit Transformations
+- **Sanitization**: Invalid chars → `_`, collapse multiple `_`
+- **Units**: Remove brackets, expand abbreviations, special cases
+- **Suffixes**: Auto unit suffixes, `_total` for monotonic sums
+
+#### Output Format
+- **Comments**: TYPE, HELP (with escaping), UNIT
+- **Values**: Proper NaN, ±Inf handling for f64
+- **Text Format**: Valid Prometheus exposition format
+
+### 7. Development Commands
+
+```bash
+# Development cycle
+cargo check                    # Compile check
+cargo clippy --tests         # Lint check
+cargo +nightly fmt           # Format code
+cargo test                   # Run all tests
+cargo insta test            # Run with snapshot testing
+
+# Snapshot workflow
+cargo insta pending-snapshots  # Review changes
+cargo insta accept             # Accept changes
+
+# Full validation
+cargo test --all-targets      # All tests
+cargo clippy --tests         # All lint checks
+```
+
+### 8. File Structure
+
+```
+src/
+├── lib.rs          # Public API and documentation
+├── exporter.rs     # PrometheusExporter + ExporterBuilder
+└── serialize.rs    # Core conversion logic (PrometheusSerializer)
+tests/
+└── it/main.rs      # Integration tests with snapshot testing
+.rustfmt.toml         # Rustfmt configuration
+.rules                # Rules for LLMs
+Cargo.toml            # Project manifest
+```
+
+### 9. Contribution Guidelines
+
+- **Breaking changes**: Discuss first, maintain backward compatibility
+- **New features**: Add comprehensive tests and documentation
+- **Bug fixes**: Include regression test
+- **Documentation**: Update examples when changing APIs
+- **Performance**: Maintain memory optimization patterns
+
+### 10. Dependencies
+
+- `opentelemetry` 0.30.0 (metrics feature only)
+- `opentelemetry_sdk` 0.30.0 (metrics + experimental_metrics_custom_reader)
+- `insta` 1.43.1 (dev dependency for snapshot testing)
