@@ -20,7 +20,7 @@
 //! ```rust
 //! use opentelemetry::{KeyValue, metrics::MeterProvider};
 //! use opentelemetry_sdk::metrics::SdkMeterProvider;
-//! use opentelemetry_prometheus_exporter::PrometheusExporter;
+//! use opentelemetry_prometheus_text_exporter::PrometheusExporter;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create exporter with default configuration
@@ -78,7 +78,7 @@
 //! pattern:
 //!
 //! ```rust
-//! use opentelemetry_prometheus_exporter::PrometheusExporter;
+//! use opentelemetry_prometheus_text_exporter::PrometheusExporter;
 //!
 //! // Disable unit suffixes in metric names
 //! let exporter = PrometheusExporter::builder()

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
-use opentelemetry_prometheus_exporter::PrometheusExporter;
+use opentelemetry_prometheus_text_exporter::PrometheusExporter;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 
@@ -88,8 +88,8 @@ fn setup_metrics_with_counters(
     // Create multiple metrics with different cardinalities
     for metric_idx in 0..num_metrics {
         let counter = meter
-            .u64_counter(format!("requests_metric_{}", metric_idx))
-            .with_description(format!("Counter metric number {}", metric_idx))
+            .u64_counter(format!("requests_metric_{metric_idx}"))
+            .with_description(format!("Counter metric number {metric_idx}"))
             .with_unit("{request}")
             .build();
 
@@ -154,7 +154,7 @@ fn bench_metrics_count(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut writer = DevNull;
-                    black_box(setup_exporter.export(&mut writer).unwrap());
+                    setup_exporter.export(&mut writer).unwrap();
                 });
             },
         );
@@ -186,7 +186,7 @@ fn bench_cardinality(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut writer = DevNull;
-                    black_box(setup_exporter.export(&mut writer).unwrap());
+                    setup_exporter.export(&mut writer).unwrap();
                 });
             },
         );
@@ -210,7 +210,7 @@ fn bench_configurations(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(setup_exporter.export(&mut writer).unwrap());
+            setup_exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -222,7 +222,7 @@ fn bench_configurations(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(setup_exporter.export(&mut writer).unwrap());
+            setup_exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -236,7 +236,7 @@ fn bench_configurations(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(setup_exporter.export(&mut writer).unwrap());
+            setup_exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -248,7 +248,7 @@ fn bench_configurations(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(setup_exporter.export(&mut writer).unwrap());
+            setup_exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -260,7 +260,7 @@ fn bench_configurations(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(setup_exporter.export(&mut writer).unwrap());
+            setup_exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -277,7 +277,7 @@ fn bench_configurations(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(setup_exporter.export(&mut writer).unwrap());
+            setup_exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -306,7 +306,7 @@ fn bench_realistic_scenarios(c: &mut Criterion) {
 
             b.iter(|| {
                 let mut writer = DevNull;
-                black_box(setup_exporter.export(&mut writer).unwrap());
+                setup_exporter.export(&mut writer).unwrap();
             });
         });
     }
@@ -351,7 +351,7 @@ fn bench_total_time_series(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut writer = DevNull;
-                    black_box(setup_exporter.export(&mut writer).unwrap());
+                    setup_exporter.export(&mut writer).unwrap();
                 });
             },
         );
@@ -379,19 +379,19 @@ fn bench_memory_patterns(c: &mut Criterion) {
         // Create metrics with names that don't need sanitization
         for i in 0..20 {
             let counter = meter
-                .u64_counter(format!("clean_metric_name_{}", i))
+                .u64_counter(format!("clean_metric_name_{i}"))
                 .with_unit("1")
                 .build();
 
             for j in 0..10 {
-                counter.add(1, &[KeyValue::new("label", format!("value_{}", j))]);
+                counter.add(1, &[KeyValue::new("label", format!("value_{j}"))]);
             }
         }
 
         b.iter(|| {
             let _provider = provider.clone();
             let mut writer = DevNull;
-            black_box(exporter.export(&mut writer).unwrap());
+            exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -410,19 +410,19 @@ fn bench_memory_patterns(c: &mut Criterion) {
         // Create metrics with names that need sanitization
         for i in 0..20 {
             let counter = meter
-                .u64_counter(format!("dirty.metric-name@{}#invalid", i))
+                .u64_counter(format!("dirty.metric-name@{i}#invalid"))
                 .with_unit("ms")
                 .build();
 
             for j in 0..10 {
-                counter.add(1, &[KeyValue::new("method", format!("POST_{}", j))]);
+                counter.add(1, &[KeyValue::new("method", format!("POST_{j}"))]);
             }
         }
 
         b.iter(|| {
             let _provider = provider.clone();
             let mut writer = DevNull;
-            black_box(exporter.export(&mut writer).unwrap());
+            exporter.export(&mut writer).unwrap();
         });
     });
 

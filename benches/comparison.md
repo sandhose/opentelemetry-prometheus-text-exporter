@@ -1,6 +1,6 @@
 # Implementation Comparison Benchmark
 
-This benchmark compares the performance of our new `opentelemetry-prometheus-exporter` implementation against the existing `opentelemetry-prometheus` crate to validate performance improvements and ensure output compatibility.
+This benchmark compares the performance of our new `opentelemetry-prometheus-text-exporter` implementation against the existing `opentelemetry-prometheus` crate to validate performance improvements and ensure output compatibility.
 
 ## Overview
 
@@ -92,7 +92,7 @@ Workload: 25 metrics × 20 cardinality = 500 time series
 
 ## Technical Implementation Differences
 
-### New Implementation (`opentelemetry-prometheus-exporter`)
+### New Implementation (`opentelemetry-prometheus-text-exporter`)
 - **Direct serialization**: Writes directly to output without intermediate buffers
 - **Memory optimization**: Uses `Cow<str>` to avoid unnecessary allocations
 - **Streaming approach**: Single-pass processing of metrics

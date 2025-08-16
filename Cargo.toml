@@ -1,5 +1,5 @@
 [package]
-name = "opentelemetry-prometheus-exporter"
+name = "opentelemetry-prometheus-text-exporter"
 version = "0.1.0"
 edition = "2024"
 

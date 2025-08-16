@@ -5,7 +5,7 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 
 #[test]
 fn test_serialize() {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::new();
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::new();
     let provider = SdkMeterProvider::builder()
         .with_resource(
             Resource::builder_empty()
@@ -121,7 +121,7 @@ fn test_serialize() {
 
 #[test]
 fn test_without_units() {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_units()
         .build();
 
@@ -150,7 +150,7 @@ fn test_without_units() {
 
 #[test]
 fn test_without_counter_suffixes() {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_counter_suffixes()
         .build();
 
@@ -178,7 +178,7 @@ fn test_without_counter_suffixes() {
 
 #[test]
 fn test_without_target_info() {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_target_info()
         .build();
 
@@ -206,7 +206,7 @@ fn test_without_target_info() {
 
 #[test]
 fn test_without_scope_info() {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_scope_info()
         .build();
 
@@ -230,7 +230,7 @@ fn test_without_scope_info() {
 
 #[test]
 fn test_combined_configuration() {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_units()
         .without_counter_suffixes()
         .without_target_info()
@@ -282,10 +282,10 @@ fn test_combined_configuration() {
 #[test]
 fn test_builder_pattern_comprehensive_example() {
     // Test 1: Default configuration (all features enabled)
-    let default_exporter = opentelemetry_prometheus_exporter::PrometheusExporter::new();
+    let default_exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::new();
 
     // Test 2: Using builder pattern with all options disabled
-    let custom_exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let custom_exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_units()
         .without_counter_suffixes()
         .without_target_info()
@@ -293,7 +293,7 @@ fn test_builder_pattern_comprehensive_example() {
         .build();
 
     // Test 3: Selective configuration
-    let selective_exporter = opentelemetry_prometheus_exporter::PrometheusExporter::builder()
+    let selective_exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_units()
         .without_target_info()
         .build();

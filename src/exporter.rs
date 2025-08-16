@@ -113,7 +113,7 @@ impl Default for PrometheusExporter {
 /// # Example Usage
 ///
 /// ```rust
-/// use opentelemetry_prometheus_exporter::PrometheusExporter;
+/// use opentelemetry_prometheus_text_exporter::PrometheusExporter;
 ///
 /// # fn main() {
 /// // Create exporter with default configuration (all features enabled)

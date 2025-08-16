@@ -9,7 +9,7 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 use prometheus::{Encoder, Registry, TextEncoder};
 
 // Comparison between implementations:
-// - opentelemetry_prometheus_exporter (our implementation)
+// - opentelemetry_prometheus_text_exporter (our implementation)
 // - opentelemetry_prometheus (existing implementation)
 
 /// A fake writer that discards all data (like /dev/null)
@@ -34,9 +34,9 @@ fn setup_new_implementation(
     cardinality: usize,
 ) -> (
     Arc<SdkMeterProvider>,
-    opentelemetry_prometheus_exporter::PrometheusExporter,
+    opentelemetry_prometheus_text_exporter::PrometheusExporter,
 ) {
-    let exporter = opentelemetry_prometheus_exporter::PrometheusExporter::new();
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::new();
 
     let provider = Arc::new(
         SdkMeterProvider::builder()
@@ -55,8 +55,8 @@ fn setup_new_implementation(
     // Create metrics with realistic patterns
     for metric_idx in 0..num_metrics {
         let counter = meter
-            .u64_counter(format!("requests_metric_{}", metric_idx))
-            .with_description(format!("Counter metric number {}", metric_idx))
+            .u64_counter(format!("requests_metric_{metric_idx}"))
+            .with_description(format!("Counter metric number {metric_idx}"))
             .with_unit("{request}")
             .build();
 
@@ -126,8 +126,8 @@ fn setup_existing_implementation(
     // Create the same metrics as in the new implementation
     for metric_idx in 0..num_metrics {
         let counter = meter
-            .u64_counter(format!("requests_metric_{}", metric_idx))
-            .with_description(format!("Counter metric number {}", metric_idx))
+            .u64_counter(format!("requests_metric_{metric_idx}"))
+            .with_description(format!("Counter metric number {metric_idx}"))
             .with_unit("{request}")
             .build();
 
@@ -186,7 +186,7 @@ fn bench_implementation_comparison(c: &mut Criterion) {
 
         b.iter(|| {
             let mut writer = DevNull;
-            black_box(exporter.export(&mut writer).unwrap());
+            exporter.export(&mut writer).unwrap();
         });
     });
 
@@ -199,7 +199,7 @@ fn bench_implementation_comparison(c: &mut Criterion) {
             let mut writer = DevNull;
             let encoder = TextEncoder::new();
             let metric_families = registry.gather();
-            black_box(encoder.encode(&metric_families, &mut writer).unwrap());
+            encoder.encode(&metric_families, &mut writer).unwrap();
         });
     });
 
@@ -230,7 +230,7 @@ fn bench_scaling_comparison(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut writer = DevNull;
-                    black_box(exporter.export(&mut writer).unwrap());
+                    exporter.export(&mut writer).unwrap();
                 });
             },
         );
@@ -246,7 +246,7 @@ fn bench_scaling_comparison(c: &mut Criterion) {
                     let mut writer = DevNull;
                     let encoder = TextEncoder::new();
                     let metric_families = registry.gather();
-                    black_box(encoder.encode(&metric_families, &mut writer).unwrap());
+                    encoder.encode(&metric_families, &mut writer).unwrap();
                 });
             },
         );

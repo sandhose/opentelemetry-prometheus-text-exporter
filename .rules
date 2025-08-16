@@ -1,7 +1,7 @@
 # OpenTelemetry Prometheus Exporter Project Rules
 
 ## Project Overview
-- **Name**: `opentelemetry-prometheus-exporter`
+- **Name**: `opentelemetry-prometheus-text-exporter`
 - **Purpose**: Converts OpenTelemetry metrics to Prometheus text exposition format
 - **Language**: Rust
 

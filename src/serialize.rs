@@ -105,7 +105,7 @@ impl PrometheusSerializer {
         for (key, value) in resource.iter() {
             let sanitized_key = sanitize_name(key.as_str());
             let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
-            write!(&mut value_buf, "{}", value).map_err(std::io::Error::other)?;
+            write!(&mut value_buf, "{value}").map_err(std::io::Error::other)?;
             label_writer.emit(&sanitized_key, &value_buf)?;
         }
         label_writer.finish()?;
