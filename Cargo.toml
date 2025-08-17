@@ -34,7 +34,7 @@ version = "1.0.1"
 
 [dev-dependencies]
 insta = "1.43.1"
-criterion = "0.5"
+criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
 
 # Used to benchmark against opentelemetry-prometheus
 prometheus = "0.14"
