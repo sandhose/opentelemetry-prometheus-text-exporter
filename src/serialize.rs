@@ -219,17 +219,17 @@ impl PrometheusSerializer {
         }
 
         // Add scope version
-        if let Some(version) = scope.version() {
-            if !version.is_empty() {
-                label_writer.emit("otel_scope_version", version)?;
-            }
+        if let Some(version) = scope.version()
+            && !version.is_empty()
+        {
+            label_writer.emit("otel_scope_version", version)?;
         }
 
         // Add scope schema URL
-        if let Some(schema_url) = scope.schema_url() {
-            if !schema_url.is_empty() {
-                label_writer.emit("otel_scope_schema_url", schema_url)?;
-            }
+        if let Some(schema_url) = scope.schema_url()
+            && !schema_url.is_empty()
+        {
+            label_writer.emit("otel_scope_schema_url", schema_url)?;
         }
 
         // Add scope attributes (excluding name, version, schema_url to avoid conflicts)
