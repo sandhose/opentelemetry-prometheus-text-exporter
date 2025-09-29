@@ -20,12 +20,12 @@ categories = ["development-tools::debugging", "development-tools::profiling"]
 [dependencies]
 
 [dependencies.opentelemetry]
-version = "0.30.0"
+version = "0.31.0"
 default-features = false
 features = ["metrics"]
 
 [dependencies.opentelemetry_sdk]
-version = "0.30.0"
+version = "0.31.0"
 default-features = false
 features = ["metrics", "experimental_metrics_custom_reader"]
 
@@ -42,7 +42,7 @@ prometheus = "0.14"
 [dev-dependencies.opentelemetry-prometheus]
 # https://github.com/open-telemetry/opentelemetry-rust/pull/3076
 git = "https://github.com/sandhose/opentelemetry-rust.git"
-branch = "otel-prometheus-0.30"
+branch = "otel-prometheus-0.31"
 
 [[test]]
 name = "it"
