@@ -27,7 +27,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-opentelemetry-prometheus-text-exporter = "0.3.0"
+opentelemetry-prometheus-text-exporter = "0.2.1"
 opentelemetry = "0.31"
 opentelemetry_sdk = "0.31"
 ```
