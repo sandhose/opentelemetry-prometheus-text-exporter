@@ -5,15 +5,17 @@ use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::reader::MetricReader;
 use opentelemetry_sdk::metrics::{ManualReader, ManualReaderBuilder, Pipeline};
 
+use crate::resource_selector::ResourceSelector;
 use crate::serialize::PrometheusSerializer;
 
 /// Configuration for the Prometheus exporter
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ExporterConfig {
     pub disable_target_info: bool,
     pub without_units: bool,
     pub without_counter_suffixes: bool,
     pub disable_scope_info: bool,
+    pub resource_selector: ResourceSelector,
 }
 
 /// Prometheus metrics exporter, using the text exposition format
@@ -114,7 +116,7 @@ impl Default for PrometheusExporter {
 /// # Example Usage
 ///
 /// ```rust
-/// use opentelemetry_prometheus_text_exporter::PrometheusExporter;
+/// use opentelemetry_prometheus_text_exporter::{PrometheusExporter, ResourceSelector};
 ///
 /// # fn main() {
 /// // Create exporter with default configuration (all features enabled)
@@ -133,6 +135,11 @@ impl Default for PrometheusExporter {
 ///     .without_target_info()
 ///     .without_scope_info()
 ///     .build();
+///
+/// // Add static resource attributes as labels
+/// let exporter = PrometheusExporter::builder()
+///     .with_resource_selector(ResourceSelector::All)
+///     .build();
 /// # }
 /// ```
 ///
@@ -140,6 +147,7 @@ impl Default for PrometheusExporter {
 /// [`without_counter_suffixes()`]: ExporterBuilder::without_counter_suffixes
 /// [`without_target_info()`]: ExporterBuilder::without_target_info
 /// [`without_scope_info()`]: ExporterBuilder::without_scope_info
+/// [`with_resource_selector()`]: ExporterBuilder::with_resource_selector
 #[derive(Default)]
 pub struct ExporterBuilder {
     disable_target_info: bool,
@@ -147,6 +155,7 @@ pub struct ExporterBuilder {
     without_counter_suffixes: bool,
     disable_scope_info: bool,
     reader: ManualReaderBuilder,
+    resource_selector: ResourceSelector,
 }
 
 impl std::fmt::Debug for ExporterBuilder {
@@ -156,6 +165,7 @@ impl std::fmt::Debug for ExporterBuilder {
             .field("without_units", &self.without_units)
             .field("without_counter_suffixes", &self.without_counter_suffixes)
             .field("disable_scope_info", &self.disable_scope_info)
+            .field("resource_selector", &self.resource_selector)
             .finish_non_exhaustive()
     }
 }
@@ -211,6 +221,22 @@ impl ExporterBuilder {
         self
     }
 
+    /// Configures whether to export resource as attributes with every metric.
+    ///
+    /// Note that this is orthogonal to the `target_info` metric, which can be
+    /// disabled using `without_target_info`.
+    ///
+    /// If you called `without_target_info` and `with_resource_selector` with
+    /// `ResourceSelector::None`, resource will not be exported at all.
+    #[must_use]
+    pub fn with_resource_selector(
+        mut self,
+        resource_selector: impl Into<ResourceSelector>,
+    ) -> Self {
+        self.resource_selector = resource_selector.into();
+        self
+    }
+
     /// Creates a new [`PrometheusExporter`] from this configuration.
     #[must_use]
     pub fn build(self) -> PrometheusExporter {
@@ -221,6 +247,7 @@ impl ExporterBuilder {
             without_units: self.without_units,
             without_counter_suffixes: self.without_counter_suffixes,
             disable_scope_info: self.disable_scope_info,
+            resource_selector: self.resource_selector,
         };
 
         let serializer = PrometheusSerializer::with_config(config);
