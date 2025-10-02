@@ -5,6 +5,7 @@ use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::reader::MetricReader;
 use opentelemetry_sdk::metrics::{ManualReader, ManualReaderBuilder, Pipeline};
 
+#[cfg(feature = "resource_selector")]
 use crate::resource_selector::ResourceSelector;
 use crate::serialize::PrometheusSerializer;
 
@@ -15,6 +16,7 @@ pub(crate) struct ExporterConfig {
     pub without_units: bool,
     pub without_counter_suffixes: bool,
     pub disable_scope_info: bool,
+    #[cfg(feature = "resource_selector")]
     pub resource_selector: ResourceSelector,
 }
 
@@ -113,10 +115,18 @@ impl Default for PrometheusExporter {
 ///     not added
 ///   - Also disables the `otel_scope_info` metric
 ///
+/// ## Resource Selector
+/// - [`with_resource_selector()`]: Adds some or all attributes from Resource to
+///   every metric as labels
+///   - Note that this includes standard OpenTelemetry attributes such as
+///     service.name etc.
+///
 /// # Example Usage
 ///
 /// ```rust
-/// use opentelemetry_prometheus_text_exporter::{PrometheusExporter, ResourceSelector};
+/// use opentelemetry_prometheus_text_exporter::PrometheusExporter;
+/// #[cfg(feature = "resource_selector")]
+/// use opentelemetry_prometheus_text_exporter::ResourceSelector;
 ///
 /// # fn main() {
 /// // Create exporter with default configuration (all features enabled)
@@ -137,6 +147,7 @@ impl Default for PrometheusExporter {
 ///     .build();
 ///
 /// // Add static resource attributes as labels
+/// #[cfg(feature = "resource_selector")]
 /// let exporter = PrometheusExporter::builder()
 ///     .with_resource_selector(ResourceSelector::All)
 ///     .build();
@@ -155,18 +166,20 @@ pub struct ExporterBuilder {
     without_counter_suffixes: bool,
     disable_scope_info: bool,
     reader: ManualReaderBuilder,
+    #[cfg(feature = "resource_selector")]
     resource_selector: ResourceSelector,
 }
 
 impl std::fmt::Debug for ExporterBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExporterBuilder")
-            .field("disable_target_info", &self.disable_target_info)
+        let mut ds = f.debug_struct("ExporterBuilder");
+        ds.field("disable_target_info", &self.disable_target_info)
             .field("without_units", &self.without_units)
             .field("without_counter_suffixes", &self.without_counter_suffixes)
-            .field("disable_scope_info", &self.disable_scope_info)
-            .field("resource_selector", &self.resource_selector)
-            .finish_non_exhaustive()
+            .field("disable_scope_info", &self.disable_scope_info);
+        #[cfg(feature = "resource_selector")]
+        ds.field("resource_selector", &self.resource_selector);
+        ds.finish_non_exhaustive()
     }
 }
 
@@ -228,6 +241,7 @@ impl ExporterBuilder {
     ///
     /// If you called `without_target_info` and `with_resource_selector` with
     /// `ResourceSelector::None`, resource will not be exported at all.
+    #[cfg(feature = "resource_selector")]
     #[must_use]
     pub fn with_resource_selector(
         mut self,
@@ -247,6 +261,7 @@ impl ExporterBuilder {
             without_units: self.without_units,
             without_counter_suffixes: self.without_counter_suffixes,
             disable_scope_info: self.disable_scope_info,
+            #[cfg(feature = "resource_selector")]
             resource_selector: self.resource_selector,
         };
 

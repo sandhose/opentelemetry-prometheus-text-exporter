@@ -17,6 +17,9 @@ keywords = [
 ]
 categories = ["development-tools::debugging", "development-tools::profiling"]
 
+[features]
+resource_selector = []
+
 [dependencies]
 
 [dependencies.opentelemetry]

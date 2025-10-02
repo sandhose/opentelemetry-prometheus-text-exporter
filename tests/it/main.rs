@@ -1,5 +1,5 @@
+use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
-use opentelemetry::{Key, KeyValue};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 
@@ -281,7 +281,11 @@ fn test_combined_configuration() {
 
 #[test]
 fn test_builder_pattern_comprehensive_example() {
+    #[cfg(feature = "resource_selector")]
     use std::collections::HashSet;
+
+    #[cfg(feature = "resource_selector")]
+    use opentelemetry::Key;
 
     // Test 1: Default configuration (all features enabled)
     let default_exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::new();
@@ -292,7 +296,6 @@ fn test_builder_pattern_comprehensive_example() {
         .without_counter_suffixes()
         .without_target_info()
         .without_scope_info()
-        .with_resource_selector(opentelemetry_prometheus_text_exporter::ResourceSelector::None)
         .build();
 
     // Test 3: Selective configuration
@@ -302,27 +305,33 @@ fn test_builder_pattern_comprehensive_example() {
         .build();
 
     // Test 4: Add all static labels fro resource
+    #[cfg(feature = "resource_selector")]
     let all_static_labels = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
         .without_target_info()
         .with_resource_selector(opentelemetry_prometheus_text_exporter::ResourceSelector::All)
         .build();
 
     // Test 5: Add some static labels fro resource
-    let mut allow_list = HashSet::new();
-    allow_list.insert(Key::from_static_str("service.name"));
-    let some_static_labels = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
-        .without_target_info()
-        .with_resource_selector(
-            opentelemetry_prometheus_text_exporter::ResourceSelector::KeyAllowList(allow_list),
-        )
-        .build();
+    #[cfg(feature = "resource_selector")]
+    let some_static_labels = {
+        let mut allow_list = HashSet::new();
+        allow_list.insert(Key::from_static_str("service.name"));
+        opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
+            .without_target_info()
+            .with_resource_selector(
+                opentelemetry_prometheus_text_exporter::ResourceSelector::KeyAllowList(allow_list),
+            )
+            .build()
+    };
 
     // Create test data for each exporter
     let test_cases = vec![
         ("default", default_exporter),
         ("all_disabled", custom_exporter),
         ("selective", selective_exporter),
+        #[cfg(feature = "resource_selector")]
         ("all_static_labels", all_static_labels),
+        #[cfg(feature = "resource_selector")]
         ("some_static_labels", some_static_labels),
     ];
 

@@ -34,6 +34,7 @@ use opentelemetry_sdk::metrics::data::{
 use smartstring::SmartString;
 
 use crate::exporter::ExporterConfig;
+#[cfg(feature = "resource_selector")]
 use crate::resource_selector::ResourceSelector;
 
 /// Internal serialization context
@@ -43,6 +44,7 @@ struct SerializerContext<'w, W: Write> {
     /// Writer that was passed to the serializer
     writer: &'w mut W,
     /// Preformatted static labels to append to every metric
+    #[cfg(feature = "resource_selector")]
     static_labels: Option<SmartString<smartstring::LazyCompact>>,
 }
 
@@ -70,11 +72,13 @@ impl PrometheusSerializer {
     pub fn serialize<W: Write>(&self, rm: &ResourceMetrics, writer: &mut W) -> std::io::Result<()> {
         let mut context = SerializerContext {
             writer,
+            #[cfg(feature = "resource_selector")]
             static_labels: self.generate_static_labels(rm.resource())?,
         };
         self.serialize_resource_metrics(rm, &mut context)
     }
 
+    #[cfg(feature = "resource_selector")]
     fn generate_static_labels(
         &self,
         resource: &Resource,
@@ -136,6 +140,7 @@ impl PrometheusSerializer {
         let mut label_writer = LabelWriter::new(context);
         for (key, value) in resource.iter() {
             // Skip attributes that were added to `static_labels`
+            #[cfg(feature = "resource_selector")]
             if self.config.resource_selector.matches(key) {
                 continue;
             }
@@ -610,6 +615,7 @@ impl<'a, 'w: 'a, W: Write> LabelWriter<'a, 'w, W> {
         Ok(())
     }
 
+    #[cfg(feature = "resource_selector")]
     fn finish(self) -> std::io::Result<()> {
         if let Some(static_labels) = &self.context.static_labels {
             if self.has_written {
@@ -618,6 +624,14 @@ impl<'a, 'w: 'a, W: Write> LabelWriter<'a, 'w, W> {
                 write!(self.context.writer, "{{{static_labels}}}")?;
             }
         } else if self.has_written {
+            write!(self.context.writer, "}}")?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "resource_selector"))]
+    fn finish(self) -> std::io::Result<()> {
+        if self.has_written {
             write!(self.context.writer, "}}")?;
         }
         Ok(())
@@ -859,6 +873,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource_selector")]
     #[test]
     fn test_generate_static_labels_none() {
         let res = Resource::builder()
@@ -875,6 +890,7 @@ mod tests {
         assert_eq!(static_labels.as_deref(), None);
     }
 
+    #[cfg(feature = "resource_selector")]
     #[test]
     fn test_generate_static_labels_all() {
         let res = Resource::builder()
@@ -894,6 +910,7 @@ mod tests {
         assert!(static_labels.contains("_invalid_chars_=\"true\""));
     }
 
+    #[cfg(feature = "resource_selector")]
     #[test]
     fn test_generate_static_labels_some() {
         use std::collections::HashSet;
@@ -954,6 +971,7 @@ mod tests {
         assert!(serializer.config.disable_target_info);
     }
 
+    #[cfg(feature = "resource_selector")]
     #[test]
     fn test_with_resource_selector_configuration() {
         use std::collections::HashSet;

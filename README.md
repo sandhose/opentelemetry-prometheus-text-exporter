@@ -64,6 +64,12 @@ exporter.export(&mut output).unwrap();
 println!("{}", String::from_utf8(output).unwrap());
 ```
 
+## Crate Features
+
+Currently supported crate features:
+- *resource_selector*: adds `with_resource_selector()` customization, at the cost of
+  1% to 7% performance degradation.
+
 ## Configuration Options
 
 The exporter supports extensive configuration through the builder pattern:
@@ -87,6 +93,7 @@ let exporter = PrometheusExporter::builder()
 | `without_counter_suffixes()` | Disables `_total` suffix on counter metrics | Suffixes enabled |
 | `without_target_info()` | Disables `target_info` metric generation from resource attributes | target_info enabled |
 | `without_scope_info()` | Disables `otel_scope_info` metric with instrumentation scope labels | scope_info enabled |
+| `with_resource_selector()` | Adds some or all resource attributes to each metric as labels | No additional labels |
 
 ## Output Format
 

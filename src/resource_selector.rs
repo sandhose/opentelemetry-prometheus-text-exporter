@@ -27,9 +27,17 @@ pub enum ResourceSelector {
     KeyAllowList(HashSet<Key>),
 }
 
-impl From<HashSet<opentelemetry::Key>> for ResourceSelector {
+impl From<HashSet<Key>> for ResourceSelector {
     fn from(keys: HashSet<Key>) -> Self {
         ResourceSelector::KeyAllowList(keys)
+    }
+}
+
+impl From<Key> for ResourceSelector {
+    fn from(value: Key) -> Self {
+        let mut allow_list = HashSet::new();
+        allow_list.insert(value);
+        ResourceSelector::KeyAllowList(allow_list)
     }
 }
 
