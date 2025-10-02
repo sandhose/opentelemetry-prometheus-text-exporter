@@ -84,7 +84,7 @@ impl PrometheusSerializer {
         if !matches!(self.config.resource_selector, ResourceSelector::None) {
             for (key, value) in resource
                 .iter()
-                .filter(|attr| self.config.resource_selector.matches(&attr.0))
+                .filter(|attr| self.config.resource_selector.matches(attr.0))
             {
                 let sanitized_key = sanitize_name(key.as_str());
                 // We need a string representation beforehand, as we rely on debug formatter
@@ -860,6 +860,65 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_static_labels_none() {
+        let res = Resource::builder()
+            .with_attribute(KeyValue::new("test1", "value123"))
+            .with_attribute(KeyValue::new("test2", 2345))
+            .with_attribute(KeyValue::new("!invalid.chars ", true))
+            .build();
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::None,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        let static_labels = serializer.generate_static_labels(&res).unwrap();
+        assert_eq!(static_labels.as_deref(), None);
+    }
+
+    #[test]
+    fn test_generate_static_labels_all() {
+        let res = Resource::builder()
+            .with_attribute(KeyValue::new("test1", "value123"))
+            .with_attribute(KeyValue::new("test2", 2345))
+            .with_attribute(KeyValue::new("!invalid.chars ", true))
+            .build();
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::All,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        let static_labels = serializer.generate_static_labels(&res).unwrap().unwrap();
+        assert!(static_labels.contains("service_name="));
+        assert!(static_labels.contains("test1=\"value123\""));
+        assert!(static_labels.contains("test2=\"2345\""));
+        assert!(static_labels.contains("_invalid_chars_=\"true\""));
+    }
+
+    #[test]
+    fn test_generate_static_labels_some() {
+        use std::collections::HashSet;
+
+        let res = Resource::builder()
+            .with_attribute(KeyValue::new("test1", "value123"))
+            .with_attribute(KeyValue::new("test2", 2345))
+            .with_attribute(KeyValue::new("!invalid.chars ", true))
+            .build();
+        let mut allow_list = HashSet::new();
+        allow_list.insert("test1".into());
+        allow_list.insert("!invalid.chars ".into());
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::KeyAllowList(allow_list),
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        let static_labels = serializer.generate_static_labels(&res).unwrap().unwrap();
+        assert!(!static_labels.contains("service_name="));
+        assert!(static_labels.contains("test1=\"value123\""));
+        assert!(!static_labels.contains("test2=\"2345\""));
+        assert!(static_labels.contains("_invalid_chars_=\"true\""));
+    }
+
+    #[test]
     fn test_without_units_configuration() {
         use crate::exporter::ExporterConfig;
 
@@ -893,6 +952,33 @@ mod tests {
         };
         let serializer = PrometheusSerializer::with_config(config);
         assert!(serializer.config.disable_target_info);
+    }
+
+    #[test]
+    fn test_with_resource_selector_configuration() {
+        use std::collections::HashSet;
+
+        use crate::exporter::ExporterConfig;
+
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::All,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(matches!(
+            serializer.config.resource_selector,
+            ResourceSelector::All
+        ));
+
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::KeyAllowList(HashSet::new()),
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(matches!(
+            serializer.config.resource_selector,
+            ResourceSelector::KeyAllowList(_)
+        ));
     }
 
     #[test]

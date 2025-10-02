@@ -1,5 +1,5 @@
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
+use opentelemetry::{Key, KeyValue};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 
@@ -281,6 +281,8 @@ fn test_combined_configuration() {
 
 #[test]
 fn test_builder_pattern_comprehensive_example() {
+    use std::collections::HashSet;
+
     // Test 1: Default configuration (all features enabled)
     let default_exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::new();
 
@@ -290,6 +292,7 @@ fn test_builder_pattern_comprehensive_example() {
         .without_counter_suffixes()
         .without_target_info()
         .without_scope_info()
+        .with_resource_selector(opentelemetry_prometheus_text_exporter::ResourceSelector::None)
         .build();
 
     // Test 3: Selective configuration
@@ -298,11 +301,29 @@ fn test_builder_pattern_comprehensive_example() {
         .without_target_info()
         .build();
 
+    // Test 4: Add all static labels fro resource
+    let all_static_labels = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
+        .without_target_info()
+        .with_resource_selector(opentelemetry_prometheus_text_exporter::ResourceSelector::All)
+        .build();
+
+    // Test 5: Add some static labels fro resource
+    let mut allow_list = HashSet::new();
+    allow_list.insert(Key::from_static_str("service.name"));
+    let some_static_labels = opentelemetry_prometheus_text_exporter::PrometheusExporter::builder()
+        .without_target_info()
+        .with_resource_selector(
+            opentelemetry_prometheus_text_exporter::ResourceSelector::KeyAllowList(allow_list),
+        )
+        .build();
+
     // Create test data for each exporter
     let test_cases = vec![
         ("default", default_exporter),
         ("all_disabled", custom_exporter),
         ("selective", selective_exporter),
+        ("all_static_labels", all_static_labels),
+        ("some_static_labels", some_static_labels),
     ];
 
     for (name, exporter) in test_cases {
@@ -381,6 +402,28 @@ fn test_builder_pattern_comprehensive_example() {
                 assert!(!output.contains("target_info"));
                 assert!(output.contains("otel_scope_name=\"demo-meter\""));
                 assert!(!output.contains("service"));
+            }
+            "all_static_labels" => {
+                assert!(output.contains("http_requests_total"));
+                assert!(output.contains("request_duration_milliseconds"));
+                assert!(output.contains("cpu_utilization_ratio"));
+                assert!(!output.contains("target_info"));
+                assert!(output.contains("otel_scope_name=\"demo-meter\""));
+                assert!(!output.contains("target_info{"));
+                assert!(output.contains("service"));
+                assert!(output.contains("service_name=\""));
+                assert!(output.contains("service_version=\""));
+            }
+            "some_static_labels" => {
+                assert!(output.contains("http_requests_total"));
+                assert!(output.contains("request_duration_milliseconds"));
+                assert!(output.contains("cpu_utilization_ratio"));
+                assert!(!output.contains("target_info"));
+                assert!(output.contains("otel_scope_name=\"demo-meter\""));
+                assert!(!output.contains("target_info{"));
+                assert!(output.contains("service"));
+                assert!(output.contains("service_name=\""));
+                assert!(!output.contains("service_version=\""));
             }
             _ => unreachable!(),
         }
