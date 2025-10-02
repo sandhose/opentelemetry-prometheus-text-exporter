@@ -34,6 +34,19 @@ use opentelemetry_sdk::metrics::data::{
 use smartstring::SmartString;
 
 use crate::exporter::ExporterConfig;
+#[cfg(feature = "resource_selector")]
+use crate::resource_selector::ResourceSelector;
+
+/// Internal serialization context
+///
+/// This object exists only during serialization.
+struct SerializerContext<'w, W: Write> {
+    /// Writer that was passed to the serializer
+    writer: &'w mut W,
+    /// Preformatted static labels to append to every metric
+    #[cfg(feature = "resource_selector")]
+    static_labels: Option<SmartString<smartstring::LazyCompact>>,
+}
 
 /// Prometheus format serializer with configurable options
 #[derive(Debug, Clone)]
@@ -57,21 +70,54 @@ impl PrometheusSerializer {
 
     /// Serialize ResourceMetrics to Prometheus format
     pub fn serialize<W: Write>(&self, rm: &ResourceMetrics, writer: &mut W) -> std::io::Result<()> {
-        self.serialize_resource_metrics(rm, writer)
+        let mut context = SerializerContext {
+            writer,
+            #[cfg(feature = "resource_selector")]
+            static_labels: self.generate_static_labels(rm.resource())?,
+        };
+        self.serialize_resource_metrics(rm, &mut context)
+    }
+
+    #[cfg(feature = "resource_selector")]
+    fn generate_static_labels(
+        &self,
+        resource: &Resource,
+    ) -> std::io::Result<Option<SmartString<smartstring::LazyCompact>>> {
+        let mut has_attrs = false;
+        let mut buf = SmartString::<smartstring::LazyCompact>::new();
+        if !matches!(self.config.resource_selector, ResourceSelector::None) {
+            for (key, value) in resource
+                .iter()
+                .filter(|attr| self.config.resource_selector.matches(attr.0))
+            {
+                let sanitized_key = sanitize_name(key.as_str());
+                // We need a string representation beforehand, as we rely on debug formatter
+                // to properly escape special or non-printable characters.
+                let string_value = value.as_str();
+                if !has_attrs {
+                    has_attrs = true;
+                    write!(&mut buf, "{sanitized_key}={string_value:?}")
+                } else {
+                    write!(&mut buf, ",{sanitized_key}={string_value:?}")
+                }
+                .map_err(std::io::Error::other)?;
+            }
+        }
+        if has_attrs { Ok(Some(buf)) } else { Ok(None) }
     }
 
     fn serialize_resource_metrics<W: Write>(
         &self,
         rm: &ResourceMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         // Serialize all scope metrics first
         for sm in rm.scope_metrics() {
-            self.serialize_scope_metrics(sm, writer)?;
+            self.serialize_scope_metrics(sm, context)?;
         }
 
         // Serialize resource as target_info
-        self.serialize_resource(rm.resource(), writer)?;
+        self.serialize_resource(rm.resource(), context)?;
 
         Ok(())
     }
@@ -79,20 +125,25 @@ impl PrometheusSerializer {
     fn serialize_resource<W: Write>(
         &self,
         resource: &Resource,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         // Don't serialize empty resources or if target_info is disabled
         if resource.is_empty() || self.config.disable_target_info {
             return Ok(());
         }
 
-        write_type_comment(writer, "target_info", "gauge")?;
-        write_help_comment(writer, "target_info", "Target metadata")?;
+        write_type_comment(context.writer, "target_info", "gauge")?;
+        write_help_comment(context.writer, "target_info", "Target metadata")?;
 
-        write!(writer, "target_info")?;
+        write!(context.writer, "target_info")?;
 
-        let mut label_writer = LabelWriter::new(writer);
+        let mut label_writer = LabelWriter::new(context);
         for (key, value) in resource.iter() {
+            // Skip attributes that were added to `static_labels`
+            #[cfg(feature = "resource_selector")]
+            if self.config.resource_selector.matches(key) {
+                continue;
+            }
             let sanitized_key = sanitize_name(key.as_str());
             let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
             write!(&mut value_buf, "{value}").map_err(std::io::Error::other)?;
@@ -100,7 +151,7 @@ impl PrometheusSerializer {
         }
         label_writer.finish()?;
 
-        writeln!(writer, " 1")?;
+        writeln!(context.writer, " 1")?;
 
         Ok(())
     }
@@ -108,10 +159,10 @@ impl PrometheusSerializer {
     fn serialize_scope_metrics<W: Write>(
         &self,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         for metric in scope_metrics.metrics() {
-            self.serialize_metric(metric, scope_metrics, writer)?;
+            self.serialize_metric(metric, scope_metrics, context)?;
         }
         Ok(())
     }
@@ -120,7 +171,7 @@ impl PrometheusSerializer {
         &self,
         metric: &Metric,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         let data = metric.data();
 
@@ -157,39 +208,39 @@ impl PrometheusSerializer {
         };
 
         // Write metadata
-        write_type_comment(writer, final_name.as_ref(), prometheus_type)?;
-        write_help_comment(writer, final_name.as_ref(), metric.description())?;
-        write_unit_comment(writer, final_name.as_ref(), converted_unit.as_ref())?;
+        write_type_comment(context.writer, final_name.as_ref(), prometheus_type)?;
+        write_help_comment(context.writer, final_name.as_ref(), metric.description())?;
+        write_unit_comment(context.writer, final_name.as_ref(), converted_unit.as_ref())?;
 
         match data {
             AggregatedMetrics::F64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, context)?;
             }
             AggregatedMetrics::U64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, context)?;
             }
             AggregatedMetrics::I64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, context)?;
             }
 
             AggregatedMetrics::F64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, context)?;
             }
             AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, context)?;
             }
             AggregatedMetrics::I64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, context)?;
             }
 
             AggregatedMetrics::F64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
+                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, context)?;
             }
             AggregatedMetrics::U64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
+                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, context)?;
             }
             AggregatedMetrics::I64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
+                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, context)?;
             }
 
             // Skip exponential histograms
@@ -198,7 +249,7 @@ impl PrometheusSerializer {
             | AggregatedMetrics::I64(MetricData::ExponentialHistogram(_)) => {}
         }
 
-        writeln!(writer)?;
+        writeln!(context.writer)?;
 
         Ok(())
     }
@@ -250,9 +301,9 @@ impl PrometheusSerializer {
         &self,
         attributes: impl Iterator<Item = &'a KeyValue>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
-        let mut label_writer = LabelWriter::new(writer);
+        let mut label_writer = LabelWriter::new(context);
 
         write_attributes_as_labels(attributes, &mut label_writer)?;
         self.write_scope_labels(scope_metrics, &mut label_writer)?;
@@ -265,9 +316,9 @@ impl PrometheusSerializer {
         attributes: impl Iterator<Item = &'a KeyValue>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         le_value: &str,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
-        let mut label_writer = LabelWriter::new(writer);
+        let mut label_writer = LabelWriter::new(context);
 
         write_attributes_as_labels(attributes, &mut label_writer)?;
         label_writer.emit("le", le_value)?;
@@ -281,14 +332,14 @@ impl PrometheusSerializer {
         name: &str,
         gauge: &Gauge<T>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         for data_point in gauge.data_points() {
-            write!(writer, "{name}")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
-            write!(writer, " ")?;
-            data_point.value().serialize(writer)?;
-            writeln!(writer)?;
+            write!(context.writer, "{name}")?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, context)?;
+            write!(context.writer, " ")?;
+            data_point.value().serialize(context.writer)?;
+            writeln!(context.writer)?;
         }
 
         Ok(())
@@ -299,14 +350,14 @@ impl PrometheusSerializer {
         name: &str,
         sum: &Sum<T>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         for data_point in sum.data_points() {
-            write!(writer, "{name}")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
-            write!(writer, " ")?;
-            data_point.value().serialize(writer)?;
-            writeln!(writer)?;
+            write!(context.writer, "{name}")?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, context)?;
+            write!(context.writer, " ")?;
+            data_point.value().serialize(context.writer)?;
+            writeln!(context.writer)?;
         }
 
         Ok(())
@@ -317,46 +368,46 @@ impl PrometheusSerializer {
         name: &str,
         histogram: &Histogram<T>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
-        writer: &mut W,
+        context: &mut SerializerContext<W>,
     ) -> std::io::Result<()> {
         for data_point in histogram.data_points() {
             // _count metric
-            write!(writer, "{name}_count")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
-            write!(writer, " ")?;
-            data_point.count().serialize(writer)?;
-            writeln!(writer)?;
+            write!(context.writer, "{name}_count")?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, context)?;
+            write!(context.writer, " ")?;
+            data_point.count().serialize(context.writer)?;
+            writeln!(context.writer)?;
 
             // _sum metric
-            write!(writer, "{name}_sum")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
-            write!(writer, " ")?;
-            data_point.sum().serialize(writer)?;
-            writeln!(writer)?;
+            write!(context.writer, "{name}_sum")?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, context)?;
+            write!(context.writer, " ")?;
+            data_point.sum().serialize(context.writer)?;
+            writeln!(context.writer)?;
 
             // _bucket metrics
             let mut cumulative_count = 0u64;
             for (bound, count) in data_point.bounds().zip(data_point.bucket_counts()) {
                 cumulative_count += count;
 
-                write!(writer, "{name}_bucket")?;
+                write!(context.writer, "{name}_bucket")?;
                 self.write_bucket_labels(
                     data_point.attributes(),
                     scope_metrics,
                     &bound.to_string(),
-                    writer,
+                    context,
                 )?;
-                write!(writer, " ")?;
-                cumulative_count.serialize(writer)?;
-                writeln!(writer)?;
+                write!(context.writer, " ")?;
+                cumulative_count.serialize(context.writer)?;
+                writeln!(context.writer)?;
             }
 
             // +Inf bucket
-            write!(writer, "{name}_bucket")?;
-            self.write_bucket_labels(data_point.attributes(), scope_metrics, "+Inf", writer)?;
-            write!(writer, " ")?;
-            data_point.count().serialize(writer)?;
-            writeln!(writer)?;
+            write!(context.writer, "{name}_bucket")?;
+            self.write_bucket_labels(data_point.attributes(), scope_metrics, "+Inf", context)?;
+            write!(context.writer, " ")?;
+            data_point.count().serialize(context.writer)?;
+            writeln!(context.writer)?;
         }
 
         Ok(())
@@ -539,15 +590,15 @@ fn add_unit_suffix<'a>(name: &'a str, unit: &str) -> Cow<'a, str> {
 /// Writes attributes as Prometheus labels directly to the writer.
 ///
 /// Handles writing the brackets and separating labels with commas.
-struct LabelWriter<'a, W: Write> {
-    writer: &'a mut W,
+struct LabelWriter<'a, 'w: 'a, W: Write> {
+    context: &'a mut SerializerContext<'w, W>,
     has_written: bool,
 }
 
-impl<'a, W: Write> LabelWriter<'a, W> {
-    fn new(writer: &'a mut W) -> Self {
+impl<'a, 'w: 'a, W: Write> LabelWriter<'a, 'w, W> {
+    fn new(context: &'a mut SerializerContext<'w, W>) -> Self {
         Self {
-            writer,
+            context,
             has_written: false,
         }
     }
@@ -555,18 +606,33 @@ impl<'a, W: Write> LabelWriter<'a, W> {
     fn emit(&mut self, key: &str, value: &str) -> std::io::Result<()> {
         if !self.has_written {
             self.has_written = true;
-            write!(self.writer, "{{")?;
+            write!(self.context.writer, "{{")?;
         } else {
-            write!(self.writer, ",")?;
+            write!(self.context.writer, ",")?;
         }
 
-        write!(self.writer, "{key}={value:?}")?;
+        write!(self.context.writer, "{key}={value:?}")?;
         Ok(())
     }
 
+    #[cfg(feature = "resource_selector")]
+    fn finish(self) -> std::io::Result<()> {
+        if let Some(static_labels) = &self.context.static_labels {
+            if self.has_written {
+                write!(self.context.writer, ",{static_labels}}}")?;
+            } else {
+                write!(self.context.writer, "{{{static_labels}}}")?;
+            }
+        } else if self.has_written {
+            write!(self.context.writer, "}}")?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "resource_selector"))]
     fn finish(self) -> std::io::Result<()> {
         if self.has_written {
-            write!(self.writer, "}}")?;
+            write!(self.context.writer, "}}")?;
         }
         Ok(())
     }
@@ -807,6 +873,68 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource_selector")]
+    #[test]
+    fn test_generate_static_labels_none() {
+        let res = Resource::builder()
+            .with_attribute(KeyValue::new("test1", "value123"))
+            .with_attribute(KeyValue::new("test2", 2345))
+            .with_attribute(KeyValue::new("!invalid.chars ", true))
+            .build();
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::None,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        let static_labels = serializer.generate_static_labels(&res).unwrap();
+        assert_eq!(static_labels.as_deref(), None);
+    }
+
+    #[cfg(feature = "resource_selector")]
+    #[test]
+    fn test_generate_static_labels_all() {
+        let res = Resource::builder()
+            .with_attribute(KeyValue::new("test1", "value123"))
+            .with_attribute(KeyValue::new("test2", 2345))
+            .with_attribute(KeyValue::new("!invalid.chars ", true))
+            .build();
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::All,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        let static_labels = serializer.generate_static_labels(&res).unwrap().unwrap();
+        assert!(static_labels.contains("service_name="));
+        assert!(static_labels.contains("test1=\"value123\""));
+        assert!(static_labels.contains("test2=\"2345\""));
+        assert!(static_labels.contains("_invalid_chars_=\"true\""));
+    }
+
+    #[cfg(feature = "resource_selector")]
+    #[test]
+    fn test_generate_static_labels_some() {
+        use std::collections::HashSet;
+
+        let res = Resource::builder()
+            .with_attribute(KeyValue::new("test1", "value123"))
+            .with_attribute(KeyValue::new("test2", 2345))
+            .with_attribute(KeyValue::new("!invalid.chars ", true))
+            .build();
+        let mut allow_list = HashSet::new();
+        allow_list.insert("test1".into());
+        allow_list.insert("!invalid.chars ".into());
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::KeyAllowList(allow_list),
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        let static_labels = serializer.generate_static_labels(&res).unwrap().unwrap();
+        assert!(!static_labels.contains("service_name="));
+        assert!(static_labels.contains("test1=\"value123\""));
+        assert!(!static_labels.contains("test2=\"2345\""));
+        assert!(static_labels.contains("_invalid_chars_=\"true\""));
+    }
+
     #[test]
     fn test_without_units_configuration() {
         use crate::exporter::ExporterConfig;
@@ -841,6 +969,34 @@ mod tests {
         };
         let serializer = PrometheusSerializer::with_config(config);
         assert!(serializer.config.disable_target_info);
+    }
+
+    #[cfg(feature = "resource_selector")]
+    #[test]
+    fn test_with_resource_selector_configuration() {
+        use std::collections::HashSet;
+
+        use crate::exporter::ExporterConfig;
+
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::All,
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(matches!(
+            serializer.config.resource_selector,
+            ResourceSelector::All
+        ));
+
+        let config = ExporterConfig {
+            resource_selector: ResourceSelector::KeyAllowList(HashSet::new()),
+            ..Default::default()
+        };
+        let serializer = PrometheusSerializer::with_config(config);
+        assert!(matches!(
+            serializer.config.resource_selector,
+            ResourceSelector::KeyAllowList(_)
+        ));
     }
 
     #[test]
