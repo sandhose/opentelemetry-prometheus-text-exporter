@@ -576,6 +576,8 @@ fn write_attributes_as_labels<'a, W: Write>(
     attributes: impl Iterator<Item = &'a KeyValue>,
     label_writer: &mut LabelWriter<W>,
 ) -> std::io::Result<()> {
+    let mut attributes = Vec::from_iter(attributes);
+    attributes.sort_by_cached_key(|kv| &kv.key);
     for attr in attributes {
         // This avoids allocating for small attribute values
         let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
