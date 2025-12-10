@@ -613,7 +613,7 @@ fn write_attributes_as_labels<'a, W: Write>(
 ) -> std::io::Result<()> {
     buffer.clear();
     buffer.extend(attributes);
-    buffer.sort_by_key(|kv| &kv.key);
+    buffer.sort_unstable_by_key(|kv| &kv.key);
     for attr in buffer {
         // This avoids allocating for small attribute values
         let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
