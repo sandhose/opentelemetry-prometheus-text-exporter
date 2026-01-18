@@ -33,24 +33,6 @@ impl From<HashSet<Key>> for ResourceSelector {
     }
 }
 
-impl From<Key> for ResourceSelector {
-    fn from(value: Key) -> Self {
-        let mut allow_list = HashSet::new();
-        allow_list.insert(value);
-        ResourceSelector::KeyAllowList(allow_list)
-    }
-}
-
-impl From<bool> for ResourceSelector {
-    fn from(value: bool) -> Self {
-        if value {
-            ResourceSelector::All
-        } else {
-            ResourceSelector::None
-        }
-    }
-}
-
 impl<K: Into<Key>> FromIterator<K> for ResourceSelector {
     fn from_iter<T: IntoIterator<Item = K>>(iter: T) -> Self {
         let hash_set: HashSet<_> = iter.into_iter().map(Into::into).collect();
