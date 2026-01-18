@@ -18,6 +18,7 @@ keywords = [
 categories = ["development-tools::debugging", "development-tools::profiling"]
 
 [features]
+default = ["resource_selector"]
 resource_selector = []
 
 [dependencies]

@@ -68,7 +68,7 @@ println!("{}", String::from_utf8(output).unwrap());
 
 Currently supported crate features:
 - *resource_selector*: adds `with_resource_selector()` customization, at the cost of
-  1% to 7% performance degradation.
+  1% to 7% performance degradation. Enabled by default.
 
 ## Configuration Options
 

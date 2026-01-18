@@ -51,8 +51,18 @@ impl From<bool> for ResourceSelector {
     }
 }
 
+impl<K: Into<Key>> FromIterator<K> for ResourceSelector {
+    fn from_iter<T: IntoIterator<Item = K>>(iter: T) -> Self {
+        let hash_set: HashSet<_> = iter.into_iter().map(Into::into).collect();
+        if hash_set.is_empty() {
+            ResourceSelector::None
+        } else {
+            ResourceSelector::KeyAllowList(hash_set)
+        }
+    }
+}
+
 impl ResourceSelector {
-    #[inline]
     #[must_use]
     pub(crate) fn matches(&self, key: &Key) -> bool {
         match self {
