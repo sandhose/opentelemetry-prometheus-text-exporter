@@ -11,6 +11,10 @@
     reason = "The configuration struct has many boolean fields, this is intentional"
 )]
 pub(crate) mod exporter;
+#[cfg(feature = "resource_selector")]
+pub(crate) mod resource_selector;
 pub(crate) mod serialize;
 
 pub use self::exporter::{ExporterBuilder, PrometheusExporter};
+#[cfg(feature = "resource_selector")]
+pub use self::resource_selector::ResourceSelector;
