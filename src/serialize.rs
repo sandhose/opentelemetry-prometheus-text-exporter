@@ -57,17 +57,19 @@ impl PrometheusSerializer {
 
     /// Serialize ResourceMetrics to Prometheus format
     pub fn serialize<W: Write>(&self, rm: &ResourceMetrics, writer: &mut W) -> std::io::Result<()> {
-        self.serialize_resource_metrics(rm, writer)
+        let mut buffer = Vec::new();
+        self.serialize_resource_metrics(rm, writer, &mut buffer)
     }
 
-    fn serialize_resource_metrics<W: Write>(
+    fn serialize_resource_metrics<'a, W: Write>(
         &self,
-        rm: &ResourceMetrics,
+        rm: &'a ResourceMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         // Serialize all scope metrics first
         for sm in rm.scope_metrics() {
-            self.serialize_scope_metrics(sm, writer)?;
+            self.serialize_scope_metrics(sm, writer, buffer)?;
         }
 
         // Serialize resource as target_info
@@ -105,22 +107,24 @@ impl PrometheusSerializer {
         Ok(())
     }
 
-    fn serialize_scope_metrics<W: Write>(
+    fn serialize_scope_metrics<'a, W: Write>(
         &self,
-        scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
+        scope_metrics: &'a opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         for metric in scope_metrics.metrics() {
-            self.serialize_metric(metric, scope_metrics, writer)?;
+            self.serialize_metric(metric, scope_metrics, writer, buffer)?;
         }
         Ok(())
     }
 
-    fn serialize_metric<W: Write>(
+    fn serialize_metric<'a, W: Write>(
         &self,
-        metric: &Metric,
+        metric: &'a Metric,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         let data = metric.data();
 
@@ -163,33 +167,51 @@ impl PrometheusSerializer {
 
         match data {
             AggregatedMetrics::F64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer, buffer)?;
             }
             AggregatedMetrics::U64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer, buffer)?;
             }
             AggregatedMetrics::I64(MetricData::Gauge(gauge)) => {
-                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer)?;
+                self.serialize_gauge(final_name.as_ref(), gauge, scope_metrics, writer, buffer)?;
             }
 
             AggregatedMetrics::F64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer, buffer)?;
             }
             AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer, buffer)?;
             }
             AggregatedMetrics::I64(MetricData::Sum(sum)) => {
-                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer)?;
+                self.serialize_sum(final_name.as_ref(), sum, scope_metrics, writer, buffer)?;
             }
 
             AggregatedMetrics::F64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
+                self.serialize_histogram(
+                    final_name.as_ref(),
+                    histogram,
+                    scope_metrics,
+                    writer,
+                    buffer,
+                )?;
             }
             AggregatedMetrics::U64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
+                self.serialize_histogram(
+                    final_name.as_ref(),
+                    histogram,
+                    scope_metrics,
+                    writer,
+                    buffer,
+                )?;
             }
             AggregatedMetrics::I64(MetricData::Histogram(histogram)) => {
-                self.serialize_histogram(final_name.as_ref(), histogram, scope_metrics, writer)?;
+                self.serialize_histogram(
+                    final_name.as_ref(),
+                    histogram,
+                    scope_metrics,
+                    writer,
+                    buffer,
+                )?;
             }
 
             // Skip exponential histograms
@@ -251,10 +273,11 @@ impl PrometheusSerializer {
         attributes: impl Iterator<Item = &'a KeyValue>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         let mut label_writer = LabelWriter::new(writer);
 
-        write_attributes_as_labels(attributes, &mut label_writer)?;
+        write_attributes_as_labels(attributes, &mut label_writer, buffer)?;
         self.write_scope_labels(scope_metrics, &mut label_writer)?;
 
         label_writer.finish()
@@ -266,26 +289,28 @@ impl PrometheusSerializer {
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         le_value: &str,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         let mut label_writer = LabelWriter::new(writer);
 
-        write_attributes_as_labels(attributes, &mut label_writer)?;
+        write_attributes_as_labels(attributes, &mut label_writer, buffer)?;
         label_writer.emit("le", le_value)?;
         self.write_scope_labels(scope_metrics, &mut label_writer)?;
 
         label_writer.finish()
     }
 
-    fn serialize_gauge<T: Numeric, W: Write>(
+    fn serialize_gauge<'a, T: Numeric, W: Write>(
         &self,
         name: &str,
-        gauge: &Gauge<T>,
+        gauge: &'a Gauge<T>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         for data_point in gauge.data_points() {
             write!(writer, "{name}")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer, buffer)?;
             write!(writer, " ")?;
             data_point.value().serialize(writer)?;
             writeln!(writer)?;
@@ -294,16 +319,17 @@ impl PrometheusSerializer {
         Ok(())
     }
 
-    fn serialize_sum<T: Numeric, W: Write>(
+    fn serialize_sum<'a, T: Numeric, W: Write>(
         &self,
         name: &str,
-        sum: &Sum<T>,
+        sum: &'a Sum<T>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         for data_point in sum.data_points() {
             write!(writer, "{name}")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer, buffer)?;
             write!(writer, " ")?;
             data_point.value().serialize(writer)?;
             writeln!(writer)?;
@@ -312,24 +338,25 @@ impl PrometheusSerializer {
         Ok(())
     }
 
-    fn serialize_histogram<T: Numeric, W: Write>(
+    fn serialize_histogram<'a, T: Numeric, W: Write>(
         &self,
         name: &str,
-        histogram: &Histogram<T>,
+        histogram: &'a Histogram<T>,
         scope_metrics: &opentelemetry_sdk::metrics::data::ScopeMetrics,
         writer: &mut W,
+        buffer: &mut Vec<&'a KeyValue>,
     ) -> std::io::Result<()> {
         for data_point in histogram.data_points() {
             // _count metric
             write!(writer, "{name}_count")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer, buffer)?;
             write!(writer, " ")?;
             data_point.count().serialize(writer)?;
             writeln!(writer)?;
 
             // _sum metric
             write!(writer, "{name}_sum")?;
-            self.write_metric_labels(data_point.attributes(), scope_metrics, writer)?;
+            self.write_metric_labels(data_point.attributes(), scope_metrics, writer, buffer)?;
             write!(writer, " ")?;
             data_point.sum().serialize(writer)?;
             writeln!(writer)?;
@@ -345,6 +372,7 @@ impl PrometheusSerializer {
                     scope_metrics,
                     &bound.to_string(),
                     writer,
+                    buffer,
                 )?;
                 write!(writer, " ")?;
                 cumulative_count.serialize(writer)?;
@@ -353,7 +381,13 @@ impl PrometheusSerializer {
 
             // +Inf bucket
             write!(writer, "{name}_bucket")?;
-            self.write_bucket_labels(data_point.attributes(), scope_metrics, "+Inf", writer)?;
+            self.write_bucket_labels(
+                data_point.attributes(),
+                scope_metrics,
+                "+Inf",
+                writer,
+                buffer,
+            )?;
             write!(writer, " ")?;
             data_point.count().serialize(writer)?;
             writeln!(writer)?;
@@ -575,8 +609,12 @@ impl<'a, W: Write> LabelWriter<'a, W> {
 fn write_attributes_as_labels<'a, W: Write>(
     attributes: impl Iterator<Item = &'a KeyValue>,
     label_writer: &mut LabelWriter<W>,
+    buffer: &mut Vec<&'a KeyValue>,
 ) -> std::io::Result<()> {
-    for attr in attributes {
+    buffer.clear();
+    buffer.extend(attributes);
+    buffer.sort_unstable_by_key(|kv| &kv.key);
+    for attr in buffer {
         // This avoids allocating for small attribute values
         let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
         let sanitized_key = sanitize_name(attr.key.as_str());
