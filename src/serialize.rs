@@ -232,7 +232,8 @@ impl PrometheusSerializer {
             label_writer.emit("otel_scope_schema_url", schema_url)?;
         }
 
-        // Add scope attributes (excluding name, version, schema_url to avoid conflicts)
+        // Add scope attributes (excluding name, version, schema_url to avoid
+        // conflicts)
         for attr in scope.attributes() {
             let key = attr.key.as_str();
             if key != "name" && key != "version" && key != "schema_url" {

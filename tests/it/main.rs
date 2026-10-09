@@ -355,7 +355,8 @@ fn test_builder_pattern_comprehensive_example() {
                 assert!(output.contains("cpu_utilization_ratio"));
                 assert!(output.contains("target_info"));
                 assert!(output.contains("otel_scope_name=\"demo-meter\""));
-                // Check for target_info with service attributes (format might vary)
+                // Check for target_info with service attributes (format might
+                // vary)
                 assert!(output.contains("target_info{"));
                 assert!(output.contains("service"));
             }
