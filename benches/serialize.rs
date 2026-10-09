@@ -327,7 +327,8 @@ fn bench_total_time_series(c: &mut Criterion) {
         }
     }
 
-    // Test different combinations that result in similar total time series counts
+    // Test different combinations that result in similar total time series
+    // counts
     let scenarios = vec![
         Scenario(10, 10),  // 100 time series
         Scenario(20, 10),  // 200 time series
