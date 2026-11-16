@@ -16,6 +16,8 @@ jobs:
 
       - name: Setup rust toolchain
         uses: moonrepo/setup-rust@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           channel: nightly
           components: rustfmt
@@ -32,6 +34,8 @@ jobs:
 
       - name: Setup rust toolchain
         uses: moonrepo/setup-rust@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           channel: stable
           components: clippy
@@ -48,6 +52,8 @@ jobs:
 
       - name: Setup rust toolchain
         uses: moonrepo/setup-rust@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           channel: stable
 
