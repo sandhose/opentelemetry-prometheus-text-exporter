@@ -25,13 +25,13 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::Write;
 
+use compact_str::CompactString;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, Gauge, Histogram, Metric, MetricData, ResourceMetrics, Sum,
 };
-use smartstring::SmartString;
 
 use crate::exporter::ExporterConfig;
 
@@ -94,7 +94,7 @@ impl PrometheusSerializer {
         let mut label_writer = LabelWriter::new(writer);
         for (key, value) in resource.iter() {
             let sanitized_key = sanitize_name(key.as_str());
-            let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
+            let mut value_buf = CompactString::default();
             write!(&mut value_buf, "{value}").map_err(std::io::Error::other)?;
             label_writer.emit(&sanitized_key, &value_buf)?;
         }
@@ -579,7 +579,7 @@ fn write_attributes_as_labels<'a, W: Write>(
 ) -> std::io::Result<()> {
     for attr in attributes {
         // This avoids allocating for small attribute values
-        let mut value_buf = SmartString::<smartstring::LazyCompact>::new();
+        let mut value_buf = CompactString::default();
         let sanitized_key = sanitize_name(attr.key.as_str());
         write!(&mut value_buf, "{}", attr.value).map_err(std::io::Error::other)?;
         label_writer.emit(sanitized_key.as_ref(), &value_buf)?;

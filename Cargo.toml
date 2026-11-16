@@ -29,8 +29,8 @@ version = "0.33.0"
 default-features = false
 features = ["metrics", "experimental_metrics_custom_reader"]
 
-[dependencies.smartstring]
-version = "1.0.1"
+[dependencies.compact_str]
+version = "0.10"
 
 [dev-dependencies]
 insta = "1.43.1"

@@ -387,3 +387,31 @@ fn test_builder_pattern_comprehensive_example() {
         }
     }
 }
+
+#[test]
+fn test_utf8_label_values_across_inline_buffer_capacity() {
+    let value = "短い値: \"quoted\"\\path\n世界";
+    let exporter = opentelemetry_prometheus_text_exporter::PrometheusExporter::new();
+    let provider = SdkMeterProvider::builder()
+        .with_resource(
+            Resource::builder_empty()
+                .with_attribute(KeyValue::new("resource", value))
+                .build(),
+        )
+        .with_reader(exporter.clone())
+        .build();
+    let meter = provider.meter("buffer-capacity");
+    meter.u64_counter("buffer_values").build().add(
+        1,
+        &[
+            KeyValue::new("attribute", value),
+            KeyValue::new("small", "tiny"),
+        ],
+    );
+    let mut output = Vec::new();
+    exporter.export(&mut output).unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains(r#"resource="短い値: \"quoted\"\\path\n世界""#));
+    assert!(output.contains(r#"attribute="短い値: \"quoted\"\\path\n世界""#));
+    assert!(output.contains(r#"small="tiny""#));
+}
